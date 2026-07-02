@@ -499,6 +499,21 @@ input,select,textarea{font-family:var(--body);}
 .gymbar{display:flex;align-items:center;gap:8px;margin:0 2px 16px;}
 .gymbar .gym-ic{font-size:13px;flex:0 0 auto;color:var(--mute);}
 .gymbar select{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border-soft);border-radius:10px;padding:9px 11px;color:var(--text);font-size:13px;font-family:var(--body);appearance:none;-webkit-appearance:none;outline:none;}
+
+/* ---------- editor do plano (aba Programa) ---------- */
+.pl-list{border-top:1px solid var(--border-soft);}
+.pl-row{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border-soft);}
+.pl-main{flex:1;min-width:0;font-size:13.5px;}
+.pl-sub{font-size:11.5px;color:var(--mute);font-family:var(--mono);margin-top:2px;}
+.pl-acts{display:flex;gap:5px;flex:0 0 auto;}
+.pl-acts button{width:34px;height:34px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border-soft);color:var(--dim);font-size:14px;}
+.pl-acts button:disabled{opacity:.3;}
+.pl-foot{display:flex;gap:10px;align-items:center;padding:11px 14px 4px;}
+.pl-add{flex:1;padding:10px;border-radius:10px;border:1.5px dashed var(--border);color:var(--accent-2);font-size:12.5px;font-weight:600;background:none;}
+.pl-reset{flex:0 0 auto;font-size:12px;color:var(--mute);background:none;border:none;text-decoration:underline;}
+.pl-edited{font-size:11px;color:var(--accent-2);font-weight:600;}
+.altlist{display:flex;flex-direction:column;gap:6px;margin-top:6px;align-items:flex-start;}
+.altlist .altswap{margin-top:0;}
 .arhint .arnote{color:var(--amarelo);opacity:.85;}
 
 /* ---------- escala de esforço: linha própria + cores vivas ---------- */
@@ -762,8 +777,9 @@ ORDER.forEach(k=>{
   PROGRAM[k].ex.forEach((e,i)=>{ lastByGroup[e.g]=i; });
   PROGRAM[k].ex.forEach((e,i)=>{ e.cut = (lastByGroup[e.g]===i); });
 });
-/* mapa id -> {nome, grupo} para gráficos de progresso */
-const EXMETA={}; ORDER.forEach(k=>PROGRAM[k].ex.forEach(e=>{ if(!EXMETA[e.id]) EXMETA[e.id]={n:e.n,g:e.g}; }));
+/* mapa id -> exercício base; EXMETA (id -> {nome, grupo}) é recalculado em refreshEXMETA() */
+const EXBASE={}; ORDER.forEach(k=>PROGRAM[k].ex.forEach(e=>{ if(!EXBASE[e.id]) EXBASE[e.id]=e; }));
+const EXMETA={};
 const numOf=x=>parseFloat(String(x==null?"0":x).replace(",","."))||0;
 const fmtNum=v=>(v%1===0?String(v):v.toFixed(1)).replace(".",",");
 const esfColor=v=>"hsl("+(135-(+v)*13)+",75%,48%)";
@@ -783,6 +799,37 @@ if(settings.apiKey===undefined) settings.apiKey="";
 if(!Array.isArray(settings.gyms)) settings.gyms=[];
 if(settings.lastGym===undefined) settings.lastGym="";
 if(settings.profile===undefined) settings.profile="";
+
+/* ---------- plano editável (fica só no aparelho; sobrepõe o PROGRAM) ---------- */
+const LS_PLAN="treino_plan_v1";
+let plan = load(LS_PLAN, null); if(!plan||typeof plan!=="object") plan={};
+plan.ov=plan.ov||{};        // overrides por exercício base (só os campos alterados)
+plan.order=plan.order||{};  // ordem/inclusão por sessão (permite remover/adicionar)
+plan.custom=plan.custom||{};// exercícios criados pelo usuário
+function baseAlts(e){ return (e && e.a && e.a!=="—") ? [e.a] : []; }
+function mergedEx(id){
+  const base=EXBASE[id], ov=plan.ov[id]||{};
+  if(!base && plan.custom[id]) return Object.assign({id:id,sets:3,rr:"10–12",rir:"2",rest:"75s",g:"outro",c:"",t:"",alts:[]},plan.custom[id],{id:id});
+  if(!base) return null;
+  const m=Object.assign({},base,ov);
+  m.alts=(ov.alts!==undefined)?ov.alts:baseAlts(base);
+  return m;
+}
+function sessIds(k){ return (plan.order[k] || PROGRAM[k].ex.map(e=>e.id)).slice(); }
+function sessExList(k){
+  const list=sessIds(k).map(mergedEx).filter(Boolean);
+  const lastByGroup={}; list.forEach((e,i)=>{ lastByGroup[e.g]=i; });
+  list.forEach((e,i)=>{ e.cut=(lastByGroup[e.g]===i); });
+  return list;
+}
+function refreshEXMETA(){
+  Object.keys(EXMETA).forEach(x=>delete EXMETA[x]);
+  ORDER.forEach(k=>sessExList(k).forEach(e=>{ if(!EXMETA[e.id]) EXMETA[e.id]={n:e.n,g:e.g}; }));
+  Object.keys(EXBASE).forEach(id=>{ if(!EXMETA[id]) EXMETA[id]={n:EXBASE[id].n,g:EXBASE[id].g}; });
+  Object.keys(plan.custom||{}).forEach(id=>{ if(!EXMETA[id]) EXMETA[id]={n:plan.custom[id].n,g:plan.custom[id].g||"outro"}; }); // customs fora das sessões (histórico)
+}
+function savePlan(){ save(LS_PLAN,plan); refreshEXMETA(); }
+refreshEXMETA();
 let history = load(LS_HIST, []);
 let draft = load(LS_DRAFT, null);
 let coachMessages = load(LS_COACH, []);
@@ -1023,7 +1070,8 @@ function renderHoje(){
 
   // ----- exercises -----
   if(!(draft.autoreg==="r" && draft.z2only)){
-    const exList = draft.autoreg==="r" ? sess.ex.slice(0,3) : sess.ex;
+    const full=sessExList(draft.session);
+    const exList = draft.autoreg==="r" ? full.slice(0,3) : full;
     const prog=el("div","ex-progress");
     prog.innerHTML=`<div class="t">Exercícios</div><div class="c" id="exCount"></div>`;
     v.appendChild(prog);
@@ -1069,19 +1117,21 @@ function renderEx(e,idx){
   const card=el("div","ex"+(allDone?" done":"")+(isCut?" cut":"")+(d.superNext?" superset":""));
   card.style.animationDelay=(idx*0.04)+"s";
   card.dataset.id=e.id;
-  const name = d.alt ? e.a : e.n;
+  const alts=e.alts||[];
+  const ai=(d.altIdx!=null)?d.altIdx:(d.alt?1:0);
+  const name=(ai>0&&alts[ai-1])?alts[ai-1]:e.n;
   card.innerHTML=`
     <div class="ex-top">
       <div class="ex-num">${idx+1}</div>
       <div class="ex-main">
-        <div class="ex-name">${name}</div>
+        <div class="ex-name">${esc(name)}</div>
         <div class="ex-target">
-          ${t.base?`<span class="tg base">${e.sets}×${e.rr} · RIR ${e.rir}</span>`:""}
-          <span class="tg key">${t.sets}×${t.rr}</span>
-          <span class="tg key">RIR ${t.rir}</span>
-          <span class="tg">desc ${e.rest}</span>
-          ${e.cad?`<span class="tg">cad ${e.cad}</span>`:""}
-          ${e.pause?`<span class="tg">pausa ${e.pause}</span>`:""}
+          ${t.base?`<span class="tg base">${e.sets}×${esc(e.rr)} · RIR ${esc(e.rir)}</span>`:""}
+          <span class="tg key">${t.sets}×${esc(t.rr)}</span>
+          <span class="tg key">RIR ${esc(t.rir)}</span>
+          <span class="tg">desc ${esc(e.rest)}</span>
+          ${e.cad?`<span class="tg">cad ${esc(e.cad)}</span>`:""}
+          ${e.pause?`<span class="tg">pausa ${esc(e.pause)}</span>`:""}
         </div>
         ${isCut?`<span class="cutbadge">corte sugerido hoje</span>`:""}
         ${ll?`<div class="lastlog"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 2M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18Z" stroke="#2E6BE0" stroke-width="1.8" stroke-linecap="round"/></svg>Última vez: ${ll.carga?ll.carga+"kg · ":""}${ll.reps||"—"} (${prettyDate(ll.date)})</div>`
@@ -1098,22 +1148,27 @@ function renderEx(e,idx){
       </div>
       <div class="stepsel"><span>passo do peso:</span><button class="sc" data-winc="1">1</button><button class="sc" data-winc="2.5">2,5</button><button class="sc" data-winc="5">5</button><span>kg</span></div>
       <div class="settypelegend">Toque no nº pra alternar tipo (<b style="color:var(--amarelo)">W</b>/<b style="color:#4A2E9E">D</b>/<b style="color:var(--vermelho)">F</b>) · toque no peso pra repetir a série anterior.</div>
-      <div class="restbar" data-rest="${e.id}"><span>⏱ descanso · alvo ${e.rest}</span> <span class="rused" style="margin-left:auto"></span></div>
+      <div class="restbar" data-rest="${e.id}"><span>⏱ descanso · alvo ${esc(e.rest)}</span> <span class="rused" style="margin-left:auto"></span></div>
     </div>
-    <div class="notewrap"><textarea data-f="nota" placeholder="nota do exercício (opcional)">${d.nota||""}</textarea></div>
+    <div class="notewrap"><textarea data-f="nota" placeholder="nota do exercício (opcional)">${esc(d.nota||"")}</textarea></div>
     <div class="ex-actions">
       <button class="btn-detail" data-act="detail"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 16v-4M12 8h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Como fazer</button>
+      <button class="btn-detail" data-act="edit">✎ ajustar</button>
       <button class="ss-toggle ${d.superNext?"on":""}" data-act="ss"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M8 6h8M8 6a3 3 0 0 0 0 6h8a3 3 0 0 1 0 6H8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>${d.superNext?"✓ supersérie":"supersérie"}</button>
     </div>
     <div class="detail">
-      <div class="d-row"><span class="lbl">Como fazer</span>${e.c}</div>
-      <div class="d-row"><span class="lbl tw">Trabalha</span>${e.t}</div>
-      ${e.a&&e.a!=="—"?`<div class="d-row"><span class="lbl al">Alternativa</span>${e.a}<br><button class="altswap ${d.alt?"on":""}" data-act="alt">${d.alt?"✓ usando alternativa":"Usei a alternativa"}</button></div>`:""}
+      <div class="d-row"><span class="lbl">Como fazer</span>${esc(e.c||"")}</div>
+      ${e.t?`<div class="d-row"><span class="lbl tw">Trabalha</span>${esc(e.t)}</div>`:""}
+      ${alts.length?`<div class="d-row"><span class="lbl al">Alternativas</span><div class="altlist">
+        <button class="altswap ${ai===0?"on":""}" data-alt="0">${ai===0?"✓ ":""}${esc(e.n)}</button>
+        ${alts.map((a,j)=>`<button class="altswap ${ai===j+1?"on":""}" data-alt="${j+1}">${ai===j+1?"✓ ":""}${esc(a)}</button>`).join("")}
+      </div></div>`:""}
     </div>`;
 
   card.querySelector('[data-f="nota"]').addEventListener("input",function(){ d.nota=this.value; persist(); });
   card.querySelector('[data-act="detail"]').onclick=function(){ card.querySelector(".detail").classList.toggle("open"); };
-  const altBtn=card.querySelector('[data-act="alt"]'); if(altBtn) altBtn.onclick=function(){ d.alt=!d.alt; persist(); renderHoje(); };
+  card.querySelectorAll("[data-alt]").forEach(b=>b.onclick=function(){ d.altIdx=+this.dataset.alt; d.alt=d.altIdx>0; persist(); renderHoje(); });
+  card.querySelector('[data-act="edit"]').onclick=function(){ openExEditor(draft.session,e.id); };
   card.querySelector('[data-act="ss"]').onclick=function(){ d.superNext=!d.superNext; persist(); renderHoje(); };
 
   renderSetList(card,e,d,ll);
@@ -1223,10 +1278,10 @@ function updateFinishBar(){
   const bar=$("#finishbar");
   if(currentTab!=="hoje"){ bar.classList.add("hidden"); return; }
   bar.classList.remove("hidden");
-  const sess=PROGRAM[draft.session];
   let total=0,doneN=0;
   if(!(draft.autoreg==="r"&&draft.z2only)){
-    const list=draft.autoreg==="r"?sess.ex.slice(0,3):sess.ex;
+    const full=sessExList(draft.session);
+    const list=draft.autoreg==="r"?full.slice(0,3):full;
     list.forEach(e=>{
       const d=draft.ex[e.id];
       if(d && Array.isArray(d.sets)){ const work=d.sets.filter(s=>!s.w); total+=work.length; doneN+=work.filter(s=>s.done).length; }
@@ -1261,11 +1316,24 @@ function buildMarkdown(rec){
   if(rec.autoreg==="r"&&rec.z2only){
     md+=`**Dia vermelho:** fiz só caminhada Zona 2${rec.cardioMin?` (${rec.cardioMin} min)`:""}. Treino de força não realizado.\n\n`;
   }else{
-    const list=rec.autoreg==="r"?sess.ex.slice(0,3):sess.ex;
+    const merged=sessExList(rec.session);
+    const list=rec.autoreg==="r"?merged.slice(0,3):merged;
+    // anexa exercícios REGISTRADOS que saíram do plano atual (removidos/custom apagado) — o .md é o backup, nada pode sumir
+    const inList=new Set(list.map(e=>e.id));
+    Object.entries(rec.ex||{}).forEach(([id,d])=>{
+      if(inList.has(id)||!d) return;
+      const has=(Array.isArray(d.sets)&&d.sets.some(s=>s.peso||s.reps||s.done))||d.carga||d.reps;
+      if(!has) return;
+      const m=mergedEx(id)||{};
+      list.push({id:id, orphan:true, n:(d.nm||m.n||(EXMETA[id]&&EXMETA[id].n)||id), alts:[], sets:m.sets||"?", rr:m.rr||"?", rir:m.rir||"?", rest:m.rest||"—", g:m.g||"outro"});
+    });
     md+=`## Exercícios\n\n`;
     list.forEach((e,i)=>{
       const d=rec.ex[e.id];
-      const name=(d&&d.alt)?`${e.a} _(alt.)_`:e.n;
+      const alts=e.alts||[]; const ai=(d&&d.altIdx!=null)?d.altIdx:((d&&d.alt)?1:0);
+      // preferir o nome CONGELADO no registro (d.nm) — edições futuras do plano não mudam treino passado
+      let name=(d&&d.nm)?d.nm.replace(/ \(alt\.\)$/," _(alt.)_"):((ai>0&&alts[ai-1])?`${alts[ai-1]} _(alt.)_`:e.n);
+      if(e.orphan) name+=" _(fora do plano atual)_";
       const tgt=(function(){const m=rec.autoreg;if(m==="r")return `2×${e.rr} RIR3`;if(m==="a")return `${Math.max(1,e.sets-1)}×${e.rr} RIR ${bumpRir(e.rir)}`;return `${e.sets}×${e.rr} RIR ${e.rir}`;})();
       md+=`### ${i+1}. ${name} — alvo ${tgt} · desc ${e.rest}\n\n`;
       if(d && Array.isArray(d.sets) && d.sets.length){
@@ -1307,6 +1375,8 @@ function finishWorkout(){
   // snapshot
   const rec=JSON.parse(JSON.stringify(draft));
   rec.block=currentBlock().n; rec.week=currentWeek();
+  // grava o nome real usado (alternativa/exercício próprio) — histórico e Cowork ficam independentes de edições futuras do plano
+  Object.keys(rec.ex||{}).forEach(id=>{ const m=mergedEx(id); if(m){ const d=rec.ex[id]; const ai=(d.altIdx!=null)?d.altIdx:(d.alt?1:0); d.nm=(ai>0&&(m.alts||[])[ai-1])?(m.alts[ai-1]+" (alt.)"):m.n; } });
   // grava/atualiza no histórico (substitui se já houver o mesmo dia+sessão)
   const i=history.findIndex(h=>h.date===rec.date&&h.session===rec.session);
   if(i>=0) history[i]=rec; else history.push(rec);
@@ -1381,7 +1451,7 @@ function renderProgress(v){
   if(exIds.length){
     const c2=el("div","chart-card");
     c2.innerHTML=`<div class="ct">Progressão de carga</div><div class="cs">maior carga (top set) por sessão · 🟡 = recorde</div>
-      <select class="exsel" id="progSel">${exIds.map(id=>`<option value="${id}">${EXMETA[id].n}</option>`).join("")}</select>
+      <select class="exsel" id="progSel">${exIds.map(id=>`<option value="${id}">${esc(EXMETA[id].n)}</option>`).join("")}</select>
       <div id="progChart"></div>`;
     v.appendChild(c2);
     const drawProg=(id)=>{
@@ -1406,7 +1476,8 @@ function renderHist(){
   sorted.forEach(h=>{
     const sess=PROGRAM[h.session];
     const done=Object.values(h.ex||{}).filter(e=> Array.isArray(e.sets) ? (e.sets.length>0 && e.sets.every(s=>s.done)) : !!e.done).length;
-    const total=(h.autoreg==="r"?sess.ex.slice(0,3):sess.ex).length;
+    const snapIds=Object.keys(h.ex||{});
+    const total=snapIds.length||(h.autoreg==="r"?sessExList(h.session).slice(0,3):sessExList(h.session)).length;
     const wd=WD_NAMES[new Date(h.date.replace(/-/g,"/")).getDay()];
     const item=el("div","hist-item");
     item.innerHTML=`
@@ -1448,18 +1519,117 @@ function renderProg(){
   </div>`;
   v.appendChild(intro);
 
+  const hint=el("div","arhint");
+  hint.style.margin="0 2px 14px";
+  hint.textContent="✎ personalize qualquer exercício (metas, alternativas, ordem, novos) — os ajustes ficam neste aparelho e já valem no treino.";
+  v.appendChild(hint);
+
   ORDER.forEach(k=>{
     const s=PROGRAM[k];
+    const list=sessExList(k);
+    const edited=!!plan.order[k] || list.some(e=>plan.ov[e.id]||plan.custom[e.id]);
     const card=el("div","prog-day");
-    card.innerHTML=`<div class="ph" style="justify-content:space-between"><div><div class="pt">${s.name}</div><div class="pd">${s.day} · ${s.sub}</div></div>
+    card.innerHTML=`<div class="ph" style="justify-content:space-between"><div><div class="pt">${s.name}${edited?' <span class="pl-edited">· personalizado</span>':""}</div><div class="pd">${s.day} · ${s.sub}</div></div>
       <button class="hist-re" style="width:auto;margin:0;padding:8px 12px" data-go="${k}">Treinar →</button></div>
-      <div class="prose" style="padding:0 14px 14px">
-        <ul>${s.ex.map((e,i)=>`<li><b>${i+1}. ${e.n}</b> — ${e.sets}×${e.rr} · RIR ${e.rir} · desc ${e.rest}</li>`).join("")}</ul>
-        <div style="color:var(--mute);font-size:12px">Core: ${s.core.name} ${s.core.scheme}</div>
-      </div>`;
+      <div class="pl-list">${list.map((e,i)=>`
+        <div class="pl-row">
+          <div class="pl-main"><b>${i+1}. ${esc(e.n)}</b><div class="pl-sub">${e.sets}×${esc(e.rr)} · RIR ${esc(e.rir)} · desc ${esc(e.rest)}${(e.alts&&e.alts.length)?` · ${e.alts.length} alt.`:""}</div></div>
+          <div class="pl-acts">
+            <button data-mv="-1" data-id="${e.id}" ${i===0?"disabled":""} aria-label="subir">↑</button>
+            <button data-mv="1" data-id="${e.id}" ${i===list.length-1?"disabled":""} aria-label="descer">↓</button>
+            <button data-edit="${e.id}" aria-label="ajustar">✎</button>
+          </div>
+        </div>`).join("")}
+      </div>
+      <div class="pl-foot">
+        <button class="pl-add" data-add>＋ exercício</button>
+        ${edited?'<button class="pl-reset" data-reset>restaurar padrão</button>':""}
+      </div>
+      <div style="color:var(--mute);font-size:12px;padding:0 14px 13px">Core: ${s.core.name} ${s.core.scheme}</div>`;
     card.querySelector("[data-go]").onclick=()=>{ ensureDraft(); switchSession(k); setTab("hoje"); };
+    card.querySelectorAll("[data-mv]").forEach(b=>b.onclick=()=>movePlanEx(k,b.dataset.id,+b.dataset.mv));
+    card.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openExEditor(k,b.dataset.edit));
+    card.querySelector("[data-add]").onclick=()=>openExEditor(k,null);
+    const rs=card.querySelector("[data-reset]"); if(rs) rs.onclick=()=>resetSessionPlan(k);
     v.appendChild(card);
   });
+}
+
+/* ============================================================
+   EDITOR DO PLANO (fica só no aparelho)
+   ============================================================ */
+function movePlanEx(k,id,dir){
+  const ids=sessIds(k); const i=ids.indexOf(id), j=i+dir;
+  if(i<0||j<0||j>=ids.length) return;
+  ids[i]=ids[j]; ids[j]=id;
+  plan.order[k]=ids; savePlan(); renderProg();
+}
+function usedElsewhere(id,notK){
+  return ORDER.some(k=>k!==notK && sessIds(k).indexOf(id)>=0);
+}
+function resetSessionPlan(k){
+  if(!confirm("Restaurar a sessão "+PROGRAM[k].name+" pro padrão do programa? Suas edições dela serão apagadas.")) return;
+  sessIds(k).forEach(id=>{ if(!EXBASE[id] && plan.custom[id] && !usedElsewhere(id,k) && !history.some(h=>h.ex&&h.ex[id]) && !(draft&&draft.ex&&draft.ex[id])) delete plan.custom[id]; });
+  PROGRAM[k].ex.forEach(e=>delete plan.ov[e.id]);
+  delete plan.order[k];
+  savePlan(); renderProg(); if(currentTab==="hoje") renderHoje();
+}
+function openExEditor(sessKey,id){
+  const base=id?EXBASE[id]:null;
+  const cur=id?mergedEx(id):{n:"",sets:3,rr:"10–12",rir:"2",rest:"75s",g:"",c:"",alts:[]};
+  if(!cur) return;
+  const sheet=$("#sheet");
+  const q=s=>esc(s==null?"":s).replace(/"/g,"&quot;");
+  sheet.innerHTML=`<div class="grab"></div>
+    <h2>${id?"Ajustar exercício":"Novo exercício"}</h2>
+    <div class="sub">${PROGRAM[sessKey].name} · fica só neste aparelho e já vale no treino.</div>
+    <div class="set-block"><div class="sl">Nome</div><input class="set-input" id="pe-n" value="${q(cur.n)}" style="font-family:var(--body)"></div>
+    <div class="set-block" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><div class="sl">Séries</div><input class="set-input" id="pe-sets" inputmode="numeric" value="${cur.sets}"></div>
+      <div><div class="sl">Reps (faixa)</div><input class="set-input" id="pe-rr" value="${q(cur.rr)}"></div>
+      <div><div class="sl">RIR alvo</div><input class="set-input" id="pe-rir" value="${q(cur.rir)}"></div>
+      <div><div class="sl">Descanso</div><input class="set-input" id="pe-rest" value="${q(cur.rest)}"></div>
+    </div>
+    <div class="set-block"><div class="sl">Grupo muscular</div><input class="set-input" id="pe-g" value="${q(cur.g)}" placeholder="peito, costas, ombro…" style="font-family:var(--body)"></div>
+    <div class="set-block"><div class="sl">Alternativas (uma por linha)</div><div class="sd">No treino, troque entre elas com um toque em "Como fazer".</div><textarea class="set-input" id="pe-alts" rows="3" style="font-family:var(--body);resize:vertical">${esc((cur.alts||[]).join("\n"))}</textarea></div>
+    <div class="set-block"><div class="sl">Como fazer (técnica)</div><textarea class="set-input" id="pe-c" rows="3" style="font-family:var(--body);resize:vertical">${esc(cur.c||"")}</textarea></div>
+    <div class="exp-btns">
+      <button class="eb primary" id="pe-save">Salvar</button>
+      ${(id&&base&&plan.ov[id])?'<button class="eb ghost" id="pe-restore">Restaurar padrão</button>':""}
+      ${id?'<button class="eb ghost" id="pe-del" style="color:var(--vermelho)">Remover do treino</button>':""}
+    </div>
+    <button class="sheet-close" id="pe-close">Cancelar</button>`;
+  $("#scrim").classList.add("open");
+  const gv=x=>sheet.querySelector("#"+x).value.trim();
+  const done=()=>{ savePlan(); closeSheet(); renderProg(); if(currentTab==="hoje") renderHoje(); };
+  sheet.querySelector("#pe-save").onclick=()=>{
+    const val={ n:gv("pe-n"), sets:Math.max(1,Math.min(10,parseInt(gv("pe-sets"),10)||3)), rr:gv("pe-rr")||"10–12", rir:gv("pe-rir")||"2", rest:gv("pe-rest")||"75s", g:gv("pe-g")||"outro", c:gv("pe-c"), alts:gv("pe-alts").split("\n").map(x=>x.trim()).filter(Boolean) };
+    if(!val.n){ alert("Dá um nome pro exercício."); return; }
+    // se o nº de séries mudou e as linhas de hoje ainda estão intocadas, zera pra reconstruir com o alvo novo
+    if(id && draft && draft.ex && draft.ex[id]){ const dd=draft.ex[id]; if(Array.isArray(dd.sets) && dd.sets.every(s=>!s.peso&&!s.reps&&!s.esf&&!s.done)){ dd.sets=[]; persist(); } }
+    if(!id){
+      const nid="cx"+Date.now().toString(36);
+      plan.custom[nid]=val;
+      const ids=sessIds(sessKey); ids.push(nid); plan.order[sessKey]=ids;
+    } else if(!base){
+      plan.custom[id]=Object.assign({},plan.custom[id],val);
+    } else {
+      const ov={};
+      ["n","sets","rr","rir","rest","g","c"].forEach(f=>{ if(String(val[f])!==String(base[f]==null?"":base[f])) ov[f]=val[f]; });
+      if(JSON.stringify(val.alts)!==JSON.stringify(baseAlts(base))) ov.alts=val.alts;
+      if(Object.keys(ov).length) plan.ov[id]=ov; else delete plan.ov[id];
+    }
+    done();
+  };
+  const rst=sheet.querySelector("#pe-restore"); if(rst) rst.onclick=()=>{ delete plan.ov[id]; done(); };
+  const del=sheet.querySelector("#pe-del"); if(del) del.onclick=()=>{
+    if(!confirm("Remover \""+cur.n+"\" desta sessão? (o histórico dele fica guardado)")) return;
+    plan.order[sessKey]=sessIds(sessKey).filter(x=>x!==id);
+    // custom só é apagado de vez se NÃO houver histórico nem registro de hoje — senão perde nome/grupo nos gráficos
+    if(!EXBASE[id] && !usedElsewhere(id,null) && !history.some(h=>h.ex&&h.ex[id]) && !(draft&&draft.ex&&draft.ex[id])) delete plan.custom[id];
+    done();
+  };
+  sheet.querySelector("#pe-close").onclick=closeSheet;
 }
 
 /* ============================================================
@@ -1476,7 +1646,7 @@ function fmtSess(rec){
   if(rec.sonoH) line+=`, sono ${rec.sonoH}h`;
   if(rec.z2only) return line+" — só caminhada Zona 2";
   const exs=Object.entries(rec.ex||{}).map(([id,d])=>{
-    const e=s.ex.find(x=>x.id===id); const nm=e?e.n:id;
+    const m=mergedEx(id); const nm=(d&&d.nm)||(m&&m.n)||id;
     if(d && Array.isArray(d.sets)){
       const work=d.sets.filter(x=>!x.w && (x.peso||x.reps)); if(!work.length) return null;
       const reps=work.map(x=>x.reps||"-").join("/");
@@ -1718,8 +1888,8 @@ function openSettings(){
   sheet.querySelector("#setWeek").onchange=function(){ settings.week=parseInt(this.value,10); settings.startDate=null; sv(); sheet.querySelector("#setStart").value=""; updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#setStart").onchange=function(){ settings.startDate=this.value||null; sv(); updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#wipe").onclick=function(){
-    if(confirm("Apagar todos os treinos registrados, o rascunho de hoje e o histórico do Coach? Não dá pra desfazer.")){
-      history=[]; draft=null; coachMessages=[]; save(LS_HIST,history); localStorage.removeItem(LS_DRAFT); saveCoach();
+    if(confirm("Apagar todos os treinos registrados, o rascunho de hoje, o histórico do Coach e as personalizações do plano? Não dá pra desfazer.")){
+      history=[]; draft=null; coachMessages=[]; plan={ov:{},order:{},custom:{}}; save(LS_HIST,history); localStorage.removeItem(LS_DRAFT); localStorage.removeItem(LS_PLAN); refreshEXMETA(); saveCoach();
       closeSheet(); updateWeekLabel(); setTab(currentTab);
     }
   };
