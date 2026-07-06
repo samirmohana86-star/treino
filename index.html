@@ -585,8 +585,20 @@ input,select,textarea{font-family:var(--body);}
 .ex.min .setsticker,.ex.min .notewrap,.ex.min .ex-actions,.ex.min .detail,.ex.min .lastlog{display:none;}
 .ex.min .ex-top{padding-bottom:14px;}
 
-/* ---------- remover do histórico ---------- */
+/* ---------- remover/editar do histórico ---------- */
 .hist-del{margin-top:11px;flex:0 0 auto;width:44px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:9px;color:var(--vermelho);font-size:15px;}
+.hist-edit{margin-top:11px;flex:0 0 auto;width:44px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:9px;color:var(--accent-2);font-size:14px;}
+
+/* ---------- editor de treino do histórico ---------- */
+.he-head{display:grid;grid-template-columns:28px 1fr 1fr 1fr 38px;gap:5px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:6px 0 5px;text-align:center;}
+.he-row{display:grid;grid-template-columns:28px 1fr 1fr 1fr 38px;gap:5px;align-items:center;margin-bottom:5px;}
+.he-row input{width:100%;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:8px 4px;text-align:center;font-family:var(--mono);font-size:14px;color:var(--text);outline:none;min-width:0;}
+.he-tag{height:34px;border-radius:8px;background:var(--surface-3);border:1px solid var(--border-soft);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--dim);}
+.he-done{height:34px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border-soft);color:var(--mute);font-size:14px;}
+.he-done.on{background:var(--verde);border-color:var(--verde);color:#FFFFFF;}
+
+/* ---------- "última vez" por série (discreto) ---------- */
+.setprev{font-size:10.5px;color:var(--mute);font-family:var(--mono);margin:4px 2px 0 45px;}
 
 /* ---------- aba Coach: tela travada — topo/abas sempre visíveis, só a conversa rola ---------- */
 body.coachlock{overflow:hidden;}
@@ -681,7 +693,7 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 
 <script>
 "use strict";
-const APP_VERSION="v16"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
+const APP_VERSION="v17"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
 
 /* ============================================================
    PROGRAMA — PPL 6x Spine-Safe (jun/2026) — embutido
@@ -976,7 +988,7 @@ function freshDraft(sessKey){
 }
 function newSet(w){ return {w:!!w,t:"",peso:"",reps:"",esf:"",done:false,rest:null}; }
 function fmtRest(s){ if(s==null||isNaN(s)) return "—"; s=Math.max(0,Math.round(s)); const m=Math.floor(s/60),r=s%60; return m>0?(m+":"+String(r).padStart(2,"0")):(r+"s"); }
-function ensureMeals(){ if(draft){ const m=(draft.meals=draft.meals||{}); m.check=m.check||{}; m.qadj=m.qadj||{}; if(m.extras==null)m.extras=""; if(m.aguaL==null)m.aguaL=""; if(m.creatina==null)m.creatina=false; if(!Array.isArray(m.logged))m.logged=[]; } }
+function ensureMeals(){ if(draft){ const m=(draft.meals=draft.meals||{}); m.check=m.check||{}; m.qadj=m.qadj||{}; if(m.extras==null)m.extras=""; if(m.aguaL==null)m.aguaL=""; if(m.creatina==null)m.creatina=false; if(!Array.isArray(m.logged))m.logged=[]; m.logged=m.logged.filter(x=>x&&typeof x==="object"&&x.nome); } } // filtro cura entradas corrompidas salvas
 function ensureSets(e){ const d=draft.ex[e.id]||(draft.ex[e.id]={alt:false,nota:"",sets:[]}); if(!Array.isArray(d.sets))d.sets=[]; if(d.sets.length===0){ const t=adjTarget(e), tr=topReps(t.rr); for(let i=0;i<t.sets;i++){ const s=newSet(false); if(tr){ s.reps=String(tr); s.pre=true; } d.sets.push(s); } } return d; } // s.pre = reps pré-preenchida (não é registro do usuário)
 let activeRest=null; // {id, ts} — exercício em que o descanso está correndo
 let openStrip=null; // {ex,si,field} — régua de kg/reps aberta
@@ -1053,11 +1065,17 @@ Se o perfil estiver em branco, peça gentilmente pra ela preencher em Ajustes (i
 Priorize sempre a segurança e a técnica. Diante de dor ou qualquer sinal de alerta, oriente procurar um profissional. Você NÃO dá conduta clínica (medicação, diagnóstico) e não substitui acompanhamento médico nem um educador físico presencial.`;
 function ensureDraft(){
   if(!draft || draft.date!==todayStr()){
+    // virada do dia: se o draft antigo tem registro real (séries/cronômetro/comida), arquiva no histórico antes — nada se perde
+    if(draft && draft.date!==todayStr()){
+      const temCrono=draft.crono&&(draft.crono.run||draft.crono.el>0);
+      const temComida=draft.meals&&Array.isArray(draft.meals.logged)&&draft.meals.logged.length>0;
+      if(hasLoggedData(draft)||temCrono||temComida){ try{ archiveDraft(); }catch(e){} }
+    }
     const wd=new Date().getDay();
     const sk=WD_MAP[wd]||"pushA";
     draft=freshDraft(sk);
     if(weekContext()) draft.autoreg="a"; // sugestão da semana
-    activeRest=null;
+    activeRest=null; openStrip=null;
     save(LS_DRAFT,draft);
   }
 }
@@ -1155,10 +1173,10 @@ function renderHoje(){
   const gb=el("div","gymbar");
   const gyms=allGyms();
   if(!draft.gym) draft.gym=settings.lastGym||gyms[0]||"";
-  gb.innerHTML=`<span class="gym-ic">📍</span><select id="gymSel">${gyms.map(g=>'<option '+(g===draft.gym?"selected":"")+'>'+esc(g)+'</option>').join("")}<option value="__add__">+ Adicionar academia…</option></select>`;
+  gb.innerHTML=`<span class="gym-ic">📍</span><select id="gymSel">${!draft.gym?'<option value="" selected>— escolher academia —</option>':""}${gyms.map(g=>'<option '+(g===draft.gym?"selected":"")+'>'+esc(g)+'</option>').join("")}<option value="__add__">+ Adicionar academia…</option></select>`;
   v.appendChild(gb);
   gb.querySelector("#gymSel").onchange=function(){
-    if(this.value==="__add__"){ openAddGym(); return; } // prompt() não abre no PWA standalone do iOS — usa folha própria
+    if(this.value==="__add__"){ this.value=draft.gym||""; openAddGym(); return; } // restaura já: fechar a folha por gesto não pode deixar o select preso no "__add__"
     draft.gym=this.value; settings.lastGym=this.value; save(LS_SET,settings); persist();
   };
 
@@ -1228,7 +1246,7 @@ function renderHoje(){
       <div class="field"><label>Calorias do treino</label><div class="inline-input"><input type="text" inputmode="numeric" data-ci="kcal" value="${(draft.kcal||"").replace(/"/g,"&quot;")}" placeholder="420"><span class="suffix">kcal</span></div></div>
       <div class="field"><label>FC final</label><div class="inline-input"><input type="text" inputmode="numeric" data-ci="bpm" value="${(draft.bpm||"").replace(/"/g,"&quot;")}" placeholder="120"><span class="suffix">bpm</span></div></div>
     </div>
-    <textarea data-ci="nota" placeholder="Energia, dores, ajustes que fez, sensações… (vai pro Diário)" style="width:100%;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:11px;padding:11px;color:var(--text);font-size:14px;resize:none;min-height:64px;outline:none;font-family:var(--body);">${draft.nota||""}</textarea>`;
+    <textarea data-ci="nota" placeholder="Energia, dores, ajustes que fez, sensações… (vai pro Diário)" style="width:100%;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:11px;padding:11px;color:var(--text);font-size:14px;resize:none;min-height:64px;outline:none;font-family:var(--body);">${esc(draft.nota||"")}</textarea>`;
   v.appendChild(ng);
   ng.querySelector("textarea").addEventListener("input",function(){ draft.nota=this.value; persist(); });
   ng.querySelector('[data-ci="kcal"]').addEventListener("input",function(){ draft.kcal=this.value; persist(); });
@@ -1237,7 +1255,7 @@ function renderHoje(){
   updateFinishBar();
 }
 
-function renderEx(e,idx){
+function renderEx(e,idx,noAnim){
   const t=adjTarget(e);
   const d=ensureSets(e);
   const ll=lastLogFor(e.id);
@@ -1246,7 +1264,7 @@ function renderEx(e,idx){
   const isOpen=!!d.open; // minimizado por padrão; toque no cabeçalho expande
   const workN=d.sets.filter(s=>!s.w).length, doneW=d.sets.filter(s=>!s.w&&s.done).length;
   const card=el("div","ex"+(allDone?" done":"")+(isCut?" cut":"")+(d.superNext?" superset":"")+(isOpen?"":" min"));
-  card.style.animationDelay=(idx*0.04)+"s";
+  if(noAnim) card.style.animation="none"; else card.style.animationDelay=(idx*0.04)+"s"; // expandir/recolher não re-anima (sem piscar)
   card.dataset.id=e.id;
   const alts=e.alts||[];
   const ai=(d.altIdx!=null)?d.altIdx:(d.alt?1:0);
@@ -1304,18 +1322,31 @@ function renderEx(e,idx){
   card.querySelectorAll("[data-alt]").forEach(b=>b.onclick=function(){ d.altIdx=+this.dataset.alt; d.alt=d.altIdx>0; persist(); renderHoje(); });
   card.querySelector('[data-act="edit"]').onclick=function(){ openExEditor(draft.session,e.id); };
   card.querySelector('[data-act="ss"]').onclick=function(){ d.superNext=!d.superNext; persist(); renderHoje(); };
-  card.querySelector(".ex-top").onclick=function(){ d.open=!d.open; persist(); card.replaceWith(renderEx(e,idx)); };
+  card.querySelector(".ex-top").onclick=function(){ d.open=!d.open; persist(); card.replaceWith(renderEx(e,idx,true)); };
 
   renderSetList(card,e,d,ll);
   return card;
 }
 
+/* séries realizadas da última vez que este exercício apareceu (qualquer sessão) — para o "últ.:" por série */
+function prevSetsFor(id){
+  for(let i=history.length-1;i>=0;i--){
+    const h=history[i]; if(draft && h.date===draft.date) continue;
+    const e=h.ex&&h.ex[id]; if(!e) continue;
+    if(Array.isArray(e.sets)){ const w=e.sets.filter(s=>!s.w&&(s.peso||s.reps||s.esf)); if(w.length) return {sets:w,date:h.date}; }
+    else if(e.carga||e.reps) return {sets:[{peso:e.carga||"",reps:e.reps||"",esf:""}],date:h.date};
+  }
+  return null;
+}
 function renderSetList(card,e,d,ll){
   const list=card.querySelector(".setlist");
   const winc=d.winc||2.5;
-  let wn=0;
+  const prev=prevSetsFor(e.id);
+  let wn=0, pw=0;
   list.innerHTML=d.sets.map((s,si)=>{
     const tag=s.w?"W":(s.t==="d"?"D":(s.t==="f"?"F":(++wn)));
+    const pi=s.w?0:++pw;
+    const ps=(!s.w&&prev&&prev.sets[pi-1])?prev.sets[pi-1]:null;
     const cls=s.w?" warm":(s.t==="d"?" drop":(s.t==="f"?" fail":""));
     let gP=""; for(let j=si-1;j>=0;j--){ if(d.sets[j].peso){ gP=d.sets[j].peso; break; } } if(!gP && ll && ll.carga) gP=ll.carga;
     let gR=""; for(let j=si-1;j>=0;j--){ if(d.sets[j].reps){ gR=d.sets[j].reps; break; } }
@@ -1338,6 +1369,7 @@ function renderSetList(card,e,d,ll){
         <button class="setdone${s.done?" on":""}" data-sa="done"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         <button class="setdel" data-sa="del" aria-label="remover">×</button>
       </div>
+      ${ps?`<div class="setprev">últ.: ${esc(ps.peso||"—")} kg × ${esc(ps.reps||"—")}${(ps.esf!==""&&ps.esf!=null)?" · esf "+esc(ps.esf):""}</div>`:""}
       <div class="valstrip hide" data-vstrip></div>
       <div class="setblk-b">
         <button class="esfchip" data-sa="esf">${esfOn?('<span class="dotc" style="background:'+esfColor(s.esf)+'"></span>Esforço '+s.esf):'<span class="dotc"></span>Esforço'}</button>
@@ -1485,6 +1517,7 @@ function openAddGym(){
   $("#scrim").classList.add("open");
   const inp=sheet.querySelector("#gymName");
   setTimeout(function(){ inp.focus(); },150);
+  inp.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); sheet.querySelector("#gymSave").click(); } }); // Enter salva (botão pode ficar sob o teclado)
   sheet.querySelector("#gymSave").onclick=function(){
     const name=inp.value.trim();
     if(!name){ inp.style.borderColor="var(--vermelho)"; inp.placeholder="dê um nome pra academia"; inp.focus(); return; }
@@ -1648,14 +1681,14 @@ function buildMarkdown(rec){
     let plan=0,cons=0; const eaten=[];
     MEAL_PLAN.forEach((meal,mi)=>meal.foods.forEach((f,fi)=>{ plan+=f.k; const key=mi+"-"+fi; if(ml.check&&ml.check[key]){ cons+=f.k; eaten.push(f.n+((ml.qadj&&ml.qadj[key])?` (${ml.qadj[key]})`:"")); } }));
     // total de macros dos itens registrados por texto/IA/código de barras
-    const lt={kcal:0,prot:0,carb:0,gord:0,fib:0}; logged.forEach(it=>{ lt.kcal+=+it.kcal||0; lt.prot+=+it.prot||0; lt.carb+=+it.carb||0; lt.gord+=+it.gord||0; lt.fib+=+it.fib||0; });
+    const lt={kcal:0,prot:0,carb:0,gord:0,fib:0}; logged.forEach(it=>{ if(!it||typeof it!=="object") return; lt.kcal+=+it.kcal||0; lt.prot+=+it.prot||0; lt.carb+=+it.carb||0; lt.gord+=+it.gord||0; lt.fib+=+it.fib||0; });
     const parts=[];
     if(logged.length) parts.push(`proteína ${fmtNum(Math.round(lt.prot))}/${(+rec.protGoal||+settings.protGoal||170)} g`, `≈${Math.round(lt.kcal)} kcal registradas`);
     if(cons) parts.push(`plano ≈${cons}/${plan} kcal`);
     parts.push(`creatina ${ml.creatina?"✅":"—"}`);
     if(ml.aguaL) parts.push(`água ${ml.aguaL} L`);
     md+=`**Nutrição:** ${parts.join(" · ")}\n`;
-    if(logged.length){ md+=`Registrado: ${logged.map(it=>cell(it.nome+(it.q?" "+it.q:"")+` [${fmtNum(it.prot)}g P, ${Math.round(it.kcal)} kcal]`)).join("; ")}.\n`; }
+    if(logged.length){ md+=`Registrado: ${logged.filter(it=>it&&typeof it==="object").map(it=>cell(it.nome+(it.q?" "+it.q:"")+` [${fmtNum(it.prot)}g P, ${Math.round(it.kcal)} kcal]`)).join("; ")}.\n`; }
     if(eaten.length) md+=`Comido do plano: ${eaten.map(cell).join(", ")}.\n`;
     if(ml.extras) md+=`Comi a mais: ${cell(ml.extras)}\n`;
     md+="\n";
@@ -1668,7 +1701,7 @@ function buildMarkdown(rec){
 
 function fileName(rec){ return `${rec.date} - ${PROGRAM[rec.session].name}.md`; }
 
-function finishWorkout(){
+function archiveDraft(){ // congela o draft atual e grava no histórico; retorna o registro (usado pelo Finalizar e pela virada do dia)
   // para o cronômetro e congela a duração
   const c=cronoState(); if(c.run){ c.el=cronoElapsed(); c.run=false; c.ts=null; persist(); updateFinishBar(); }
   // snapshot
@@ -1686,8 +1719,9 @@ function finishWorkout(){
   if(i>=0) history[i]=rec; else history.push(rec);
   save(LS_HIST,history);
   activeRest=null;
-  openExport(rec);
+  return rec;
 }
+function finishWorkout(){ openExport(archiveDraft()); }
 
 /* comparativo com o treino anterior da mesma sessão (folha de finalizar) */
 function buildCompareHTML(rec){
@@ -1762,7 +1796,7 @@ async function shareFile(md,fn){
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
 }
 
-function closeSheet(){ $("#scrim").classList.remove("open"); }
+function closeSheet(){ $("#scrim").classList.remove("open"); if(currentTab==="coach") renderCoach(); } // fechar Ajustes por gesto também precisa reativar o input do Coach
 
 /* ============================================================
    HISTÓRICO
@@ -1830,9 +1864,11 @@ function renderHist(){
       </div>
       <div style="display:flex;gap:8px">
         <button class="hist-re" style="flex:1">📄 Ver resumo & arquivo →</button>
+        <button class="hist-edit" aria-label="editar treino">✎</button>
         <button class="hist-del" aria-label="remover treino">🗑</button>
       </div>`;
     item.querySelector(".hist-re").onclick=()=>openExport(h);
+    item.querySelector(".hist-edit").onclick=()=>openHistEditor(h);
     item.querySelector(".hist-del").onclick=()=>{
       appConfirm("Remover o treino "+sess.name+" de "+prettyDate(h.date)+" do histórico do app? (o arquivo .md exportado no Drive não é afetado)",function(){
         const ix=history.indexOf(h); if(ix>=0){ history.splice(ix,1); save(LS_HIST,history); }
@@ -1841,6 +1877,75 @@ function renderHist(){
     };
     v.appendChild(item);
   });
+}
+
+/* ============================================================
+   EDITOR DE TREINO DO HISTÓRICO — corrigir academia e séries depois do fato
+   ============================================================ */
+function openHistEditor(h){
+  const sheet=$("#sheet");
+  const qv=s=>esc(s==null?"":s).replace(/"/g,"&quot;");
+  const gyms=allGyms(); if(h.gym && gyms.indexOf(h.gym)<0) gyms.unshift(h.gym);
+  const exBlocks=Object.entries(h.ex||{}).map(([id,d])=>{
+    const nm=esc((d&&d.nm)||exNameOf(id));
+    if(d&&Array.isArray(d.sets)&&d.sets.length){
+      let n=0;
+      const rows=d.sets.map((s,si)=>{ const tag=s.w?"W":(s.t==="d"?"D":(s.t==="f"?"F":(++n)));
+        return `<div class="he-row" data-ex="${id}" data-si="${si}">
+          <span class="he-tag">${tag}</span>
+          <input data-f="peso" inputmode="decimal" value="${qv(s.peso)}" placeholder="kg">
+          <input data-f="reps" inputmode="numeric" value="${qv(s.reps)}" placeholder="reps">
+          <input data-f="esf" inputmode="numeric" value="${qv(s.esf)}" placeholder="esf">
+          <button class="he-done${s.done?" on":""}" data-don aria-label="feita">✓</button>
+        </div>`; }).join("");
+      return `<div class="set-block"><div class="sl">${nm}</div><div class="he-head"><span></span><span>kg</span><span>reps</span><span>esf</span><span>✓</span></div>${rows}</div>`;
+    }
+    if(d&&(d.carga||d.reps)){ // formato antigo (sem séries)
+      return `<div class="set-block"><div class="sl">${nm}</div><div class="he-row" data-ex="${id}" data-si="-1">
+        <span class="he-tag">1</span>
+        <input data-f="carga" inputmode="decimal" value="${qv(d.carga)}" placeholder="kg">
+        <input data-f="reps" inputmode="numeric" value="${qv(d.reps)}" placeholder="reps">
+        <span></span><span></span>
+      </div></div>`;
+    }
+    return "";
+  }).join("");
+  sheet.innerHTML=`<div class="grab"></div>
+    <h2>Editar treino</h2>
+    <div class="sub">${PROGRAM[h.session]?PROGRAM[h.session].name:esc(h.session)} · ${prettyDate(h.date)}. A nota é recalculada ao salvar. O .md já exportado no Drive não muda sozinho — reexporte depois.</div>
+    <div class="set-block"><div class="sl">Academia</div>
+      <select class="set-input" id="heGym" style="font-family:var(--body)">
+        <option value="" ${!h.gym?"selected":""}>— sem academia —</option>
+        ${gyms.map(g=>'<option '+(g===h.gym?"selected":"")+'>'+esc(g)+'</option>').join("")}
+        <option value="__new__">+ Outra…</option>
+      </select>
+      <input class="set-input" id="heGymNew" placeholder="nome da nova academia" style="display:none;margin-top:8px;font-family:var(--body)">
+    </div>
+    ${exBlocks||'<div class="sub">Este registro não tem exercícios com séries.</div>'}
+    <div class="exp-btns"><button class="eb primary" id="heSave">Salvar alterações</button></div>
+    <button class="sheet-close" id="heCancel">Cancelar</button>`;
+  $("#scrim").classList.add("open");
+  const gymSel=sheet.querySelector("#heGym"), gymNew=sheet.querySelector("#heGymNew");
+  gymSel.onchange=function(){ const nova=this.value==="__new__"; gymNew.style.display=nova?"block":"none"; if(nova) gymNew.focus(); };
+  sheet.querySelectorAll(".he-done").forEach(b=>b.onclick=()=>b.classList.toggle("on"));
+  sheet.querySelector("#heCancel").onclick=closeSheet;
+  sheet.querySelector("#heSave").onclick=function(){
+    let g=gymSel.value;
+    if(g==="__new__"){ g=gymNew.value.trim(); if(g && GYMS_BASE.indexOf(g)<0 && settings.gyms.indexOf(g)<0){ settings.gyms.push(g); save(LS_SET,settings); } }
+    h.gym=g||"";
+    sheet.querySelectorAll(".he-row").forEach(row=>{
+      const id=row.dataset.ex, si=+row.dataset.si, d=h.ex[id]; if(!d) return;
+      const val=f=>{ const el=row.querySelector('[data-f="'+f+'"]'); return el?el.value.trim():null; };
+      if(si<0){ d.carga=val("carga")||""; d.reps=val("reps")||""; return; } // formato antigo
+      const s=Array.isArray(d.sets)?d.sets[si]:null; if(!s) return;
+      s.peso=val("peso")||""; s.reps=val("reps")||"";
+      let esf=val("esf")||""; if(esf!==""){ const v=parseInt(esf,10); esf=(isNaN(v)||v<0)?"":String(Math.min(10,v)); } s.esf=esf;
+      const don=row.querySelector(".he-done"); if(don) s.done=don.classList.contains("on");
+    });
+    if(h.z2only||workSetsOf(h).total>0) h.score=scoreWorkout(h); // nota acompanha a correção
+    save(LS_HIST,history);
+    closeSheet(); renderHist();
+  };
 }
 
 /* ============================================================
@@ -2233,6 +2338,7 @@ function rememberFood(it){ // guarda no cache de recentes (dedup por nome+quanti
   saveFoods();
 }
 function normItem(o){ // sanitiza um item vindo da IA/API
+  if(!o||typeof o!=="object") return null; // null/primitivo no meio do array não derruba o lote
   const n=v=>{ const x=parseFloat(String(v==null?"":v).replace(",",".")); return isNaN(x)?0:Math.max(0,Math.round(x*10)/10); };
   const nome=String(o.nome||o.name||"").trim().slice(0,80); if(!nome) return null;
   return {nome:nome, q:String(o.q||o.quantidade||o.porcao||"").trim().slice(0,40), kcal:Math.round(n(o.kcal||o.calorias||o.energia)), prot:n(o.prot||o.proteina||o.protein), carb:n(o.carb||o.carboidrato||o.carbs), gord:n(o.gord||o.gordura||o.fat||o.lipideos), fib:n(o.fib||o.fibra||o.fiber)};
@@ -2267,14 +2373,25 @@ async function lookupBarcode(code){
   }catch(e){ throw {msg:"Sem internet ou produto não encontrado."}; }
   if(!data||data.status!==1||!data.product) throw {msg:"Produto não encontrado no Open Food Facts."};
   const p=data.product, nu=p.nutriments||{};
-  const base=(p.product_name||"Produto").trim(), brand=p.brands?String(p.brands).split(",")[0].trim():"";
+  const base=String(p.product_name||"").trim()||"Produto", brand=p.brands?String(p.brands).split(",")[0].trim():"";
   const nome=(brand && base.toLowerCase().indexOf(brand.toLowerCase())<0)?base+" ("+brand+")":base; // não duplica a marca já contida no nome
   const g=k=>{ const x=nu[k]; return (x==null||isNaN(x))?0:Math.max(0,Math.round(+x*10)/10); };
-  return normItem({nome:nome.slice(0,80), q:"100 g", kcal:g("energy-kcal_100g")||Math.round(g("energy_100g")/4.184), prot:g("proteins_100g"), carb:g("carbohydrates_100g"), gord:g("fat_100g"), fib:g("fiber_100g")});
+  const item=normItem({nome:nome.slice(0,80), q:"100 g", kcal:g("energy-kcal_100g")||Math.round(g("energy_100g")/4.184), prot:g("proteins_100g"), carb:g("carbohydrates_100g"), gord:g("fat_100g"), fib:g("fiber_100g")});
+  if(!item) throw {msg:"Produto sem nome no Open Food Facts."};
+  if(!item.kcal&&!item.prot&&!item.carb&&!item.gord) throw {msg:"Produto encontrado, mas sem dados nutricionais no Open Food Facts."};
+  return item;
 }
-function loggedTotals(){ const t={kcal:0,prot:0,carb:0,gord:0,fib:0}; (draft.meals.logged||[]).forEach(it=>{ t.kcal+=+it.kcal||0; t.prot+=+it.prot||0; t.carb+=+it.carb||0; t.gord+=+it.gord||0; t.fib+=+it.fib||0; }); Object.keys(t).forEach(k=>t[k]=Math.round(t[k]*10)/10); return t; }
-function addLoggedItems(items){ items.forEach(it=>{ draft.meals.logged.push(it); rememberFood(it); }); persist(); renderNutri(); }
+function loggedTotals(){ const t={kcal:0,prot:0,carb:0,gord:0,fib:0}; (draft.meals.logged||[]).forEach(it=>{ if(!it||typeof it!=="object") return; t.kcal+=+it.kcal||0; t.prot+=+it.prot||0; t.carb+=+it.carb||0; t.gord+=+it.gord||0; t.fib+=+it.fib||0; }); Object.keys(t).forEach(k=>t[k]=Math.round(t[k]*10)/10); return t; }
+function addLoggedItems(items){
+  ensureDraft(); ensureMeals(); // virada do dia: arquiva ontem e registra no dia certo
+  items=(items||[]).filter(it=>it&&typeof it==="object"&&it.nome);
+  if(!items.length) return;
+  items.forEach(it=>{ draft.meals.logged.push(it); rememberFood(it); });
+  persist(); renderNutri();
+}
 
+/* estado do registro rápido que sobrevive a re-renders (marcar creatina/plano não pode apagar o que está digitado) */
+let qlogText="", qlogBar="", qlogBusy=false, qlogSeq=0, qlogErrMsg="";
 function renderQuickLog(){
   const card=el("div","card qlog");
   const hasKey=!!(settings.apiKey||"").trim();
@@ -2283,27 +2400,50 @@ function renderQuickLog(){
     <textarea id="qlogText" placeholder="o que você comeu? ex.: 180g de patinho, 4 colheres de arroz, 1 concha de feijão"></textarea>
     <button class="qlog-btn" id="qlogCalc"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/></svg>Calcular macros com IA</button>
     <div class="qlog-bar"><input id="qlogBar" inputmode="numeric" placeholder="código de barras (digite/cole)"><button id="qlogBarBtn">Buscar</button></div>
-    <div class="qlog-err hidden" id="qlogErr"></div>
+    <div class="qlog-err ${qlogErrMsg?"":"hidden"}" id="qlogErr">${esc(qlogErrMsg)}</div>
     ${!hasKey?`<div class="qlog-err" style="color:var(--mute)">Sem chave de API — configure em ⚙ pra calcular por texto. O código de barras e os recentes funcionam sem chave.</div>`:""}
     ${foodCache.length?`<div class="qlog-recent">${foodCache.slice(0,20).map((f,i)=>`<button class="qchip" data-fav="${i}">${esc(f.nome)}${f.q?" · "+esc(f.q):""} <b>${fmtNum(f.prot)}g</b></button>`).join("")}</div>`:""}
     ${logged.length?`<div id="qlogList"></div>`:`<div class="foot" style="padding:14px 4px 2px">Nada registrado hoje. Descreva o que comeu que a IA calcula proteína, carbo, gordura e calorias — e guarda pra virar atalho.</div>`}`;
 
-  const errEl=card.querySelector("#qlogErr");
-  const showErr=m=>{ errEl.textContent=m; errEl.classList.remove("hidden"); };
   const calcBtn=card.querySelector("#qlogCalc"), ta=card.querySelector("#qlogText");
-  ta.addEventListener("input",()=>{ ta.style.height="auto"; ta.style.height=Math.min(140,ta.scrollHeight)+"px"; });
-  calcBtn.onclick=async()=>{
-    const t=ta.value.trim(); if(!t) return;
-    errEl.classList.add("hidden"); calcBtn.disabled=true; calcBtn.textContent="Calculando…";
-    try{ const items=await parseFoodText(t); addLoggedItems(items); }
-    catch(e){ calcBtn.disabled=false; calcBtn.innerHTML="Calcular macros com IA"; if(e&&e.noKey){ openSettings(); } else showErr((e&&e.msg)||"Não consegui calcular agora."); }
-  };
   const barBtn=card.querySelector("#qlogBarBtn"), barIn=card.querySelector("#qlogBar");
+  // reidrata o que estava digitado e o estado "calculando" (requisição em voo)
+  ta.value=qlogText; barIn.value=qlogBar;
+  if(qlogBusy){ calcBtn.disabled=true; calcBtn.textContent="Calculando…"; barBtn.disabled=true; }
+  ta.addEventListener("input",()=>{ qlogText=ta.value; ta.style.height="auto"; ta.style.height=Math.min(140,ta.scrollHeight)+"px"; });
+  barIn.addEventListener("input",()=>{ qlogBar=barIn.value; });
+  calcBtn.onclick=async()=>{
+    const t=ta.value.trim(); if(!t||qlogBusy) return;
+    const my=++qlogSeq; qlogBusy=true; qlogErrMsg="";
+    calcBtn.disabled=true; calcBtn.textContent="Calculando…"; barBtn.disabled=true;
+    try{
+      const items=await parseFoodText(t);
+      if(my!==qlogSeq) return; // resposta velha: outro pedido assumiu — não duplica
+      qlogBusy=false; qlogText="";
+      addLoggedItems(items);
+    }catch(e){
+      if(my!==qlogSeq) return;
+      qlogBusy=false;
+      if(e&&e.noKey){ renderNutri(); openSettings(); return; }
+      qlogErrMsg=(e&&e.msg)||"Não consegui calcular agora.";
+      renderNutri(); // o erro sobrevive mesmo se o card foi re-renderizado no meio
+    }
+  };
   barBtn.onclick=async()=>{
-    const c=barIn.value.trim(); if(!c) return;
-    errEl.classList.add("hidden"); barBtn.disabled=true; barBtn.textContent="…";
-    try{ const it=await lookupBarcode(c); addLoggedItems([it]); }
-    catch(e){ barBtn.disabled=false; barBtn.textContent="Buscar"; showErr((e&&e.msg)||"Não encontrei esse código."); }
+    const c=barIn.value.trim(); if(!c||qlogBusy) return;
+    const my=++qlogSeq; qlogBusy=true; qlogErrMsg="";
+    barBtn.disabled=true; barBtn.textContent="…"; calcBtn.disabled=true;
+    try{
+      const it=await lookupBarcode(c);
+      if(my!==qlogSeq) return;
+      qlogBusy=false; qlogBar="";
+      addLoggedItems([it]);
+    }catch(e){
+      if(my!==qlogSeq) return;
+      qlogBusy=false;
+      qlogErrMsg=(e&&e.msg)||"Não encontrei esse código.";
+      renderNutri();
+    }
   };
   card.querySelectorAll("[data-fav]").forEach(b=>b.onclick=()=>{ const f=foodCache[+b.dataset.fav]; if(f) addLoggedItems([Object.assign({},f)]); });
 
@@ -2375,7 +2515,7 @@ function renderNutri(){
 
   const ex=el("div","card");
   ex.innerHTML=`<div class="section-label">Comi a mais (fora do plano)</div>
-    <textarea id="mealExtras" placeholder="ex.: 1 pão de queijo, 1 refri…" style="width:100%;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:11px;padding:11px;color:var(--text);font-size:14px;resize:none;min-height:56px;outline:none;font-family:var(--body);">${ml.extras||""}</textarea>`;
+    <textarea id="mealExtras" placeholder="ex.: 1 pão de queijo, 1 refri…" style="width:100%;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:11px;padding:11px;color:var(--text);font-size:14px;resize:none;min-height:56px;outline:none;font-family:var(--body);">${esc(ml.extras||"")}</textarea>`;
   v.appendChild(ex);
   ex.querySelector("#mealExtras").addEventListener("input",function(){ ml.extras=this.value; persist(); });
 
@@ -2513,8 +2653,19 @@ updateWeekLabel();
 
 // barra de descanso (contagem regressiva) + cronômetro do treino
 setInterval(function(){ rcdTick(); cronoTick(); },1000);
-// ao voltar do background, retoma o áudio (iOS deixa "interrupted") e atualiza a contagem na hora
-document.addEventListener("visibilitychange",function(){ if(!document.hidden){ try{ const ac=window.__ac; if(ac&&ac.state!=="running") ac.resume(); }catch(e){} rcdTick(); } });
+// ao voltar do background, retoma o áudio (iOS deixa "interrupted"), atualiza a contagem
+// e trata a virada do dia (o PWA volta com o JS de ontem vivo — arquiva e recomeça)
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden) return;
+  try{ const ac=window.__ac; if(ac&&ac.state!=="running") ac.resume(); }catch(e){}
+  rcdTick();
+  if(draft && draft.date!==todayStr()){
+    if(currentTab==="hoje") renderHoje();
+    else if(currentTab==="nutri") renderNutri();
+    else ensureDraft();
+    updateFinishBar();
+  }
+});
 
 // aba Coach: encaixa a tela na área visível — quando o teclado do iOS abre, o visualViewport encolhe
 // e o layout acompanha, em vez de a página ser empurrada pra baixo (abas sempre no enquadro).
@@ -2527,7 +2678,8 @@ function coachViewportFix(){
   document.documentElement.style.setProperty("--vvh",(vv?vv.height:window.innerHeight)+"px");
   window.scrollTo(0,0);
   if(app) app.style.transform=(vv&&vv.offsetTop>0)?("translateY("+vv.offsetTop+"px)"):"";
-  const feed=document.querySelector(".coach-feed"); if(feed) feed.scrollTop=feed.scrollHeight;
+  const feed=document.querySelector(".coach-feed");
+  if(feed && feed.scrollHeight-feed.scrollTop-feed.clientHeight<60) feed.scrollTop=feed.scrollHeight; // só re-ancora se já estava no fim (não rouba a posição de leitura)
 }
 if(window.visualViewport){
   window.visualViewport.addEventListener("resize",coachViewportFix);
