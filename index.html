@@ -242,6 +242,11 @@ input,select,textarea{font-family:var(--body);}
   font-size:15px;font-family:var(--display);letter-spacing:.02em;padding:15px;border-radius:13px;
   display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 8px 24px rgba(46,107,224,.22);}
 .btn-finish:active{transform:scale(.985);}
+.btn-crono{flex:0 0 auto;display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);
+  border-radius:13px;padding:13px 13px;font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;}
+.btn-crono.run{background:var(--accent-dim);border-color:var(--accent);color:var(--accent-2);}
+.btn-crono.paused{background:var(--amarelo-bg);border-color:#EBD9A8;color:var(--amarelo);}
+.btn-crono:active{transform:scale(.97);}
 
 /* ---------- modal / export ---------- */
 .scrim{position:fixed;inset:0;z-index:40;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);
@@ -635,7 +640,8 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 <div class="finishbar hidden" id="finishbar">
   <div class="inner">
     <div class="fin-meta" id="finMeta"></div>
-    <button class="btn-finish" id="btnFinish">Finalizar treino ✓</button>
+    <button class="btn-crono" id="btnCrono">▶ Iniciar</button>
+    <button class="btn-finish" id="btnFinish">Finalizar ✓</button>
   </div>
 </div>
 
@@ -645,7 +651,7 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 
 <script>
 "use strict";
-const APP_VERSION="v14"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
+const APP_VERSION="v15"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
 
 /* ============================================================
    PROGRAMA — PPL 6x Spine-Safe (jun/2026) — embutido
@@ -932,6 +938,7 @@ function freshDraft(sessKey){
     cardioDone:false, cardioMin:"",
     warmDone:false, coreDone:false, coreNota:"",
     z2only:false, nota:"", kcal:"", bpm:"",
+    crono:{el:0,run:false,ts:null}, // cronômetro do treino: el=segundos acumulados; run+ts=contando desde ts (época)
     meals:{check:{},qadj:{},extras:"",aguaL:"",creatina:false},
     ex:{}, // id -> {alt, nota, sets:[{w,peso,reps,esf,done,rest}]}
     created:todayStr() };
@@ -1351,7 +1358,8 @@ function renderSetList(card,e,d,ll){
         if(openStrip&&openStrip.ex===e.id){ if(openStrip.si===si) openStrip=null; else if(openStrip.si>si) openStrip.si--; } } // régua acompanha o índice
       else if(act==="done"){
         s.done=!s.done;
-        if(s.done){ const now=Date.now(); if(activeRest && activeRest.id===e.id) s.rest=Math.round((now-activeRest.ts)/1000); activeRest={id:e.id,ts:now}; startRestCountdown(restSeconds(e.rest)); }
+        if(s.done){ const now=Date.now(); if(activeRest && activeRest.id===e.id) s.rest=Math.round((now-activeRest.ts)/1000); activeRest={id:e.id,ts:now}; startRestCountdown(restSeconds(e.rest));
+          const c=cronoState(); if(!c.run && c.el===0 && !c.ts){ c.ts=now; c.run=true; } } // 1ª série ✓ dá o start se esqueceu
         else { s.rest=null; if(activeRest && activeRest.id===e.id) activeRest=null; rcdSkip(); }
       }
       rerender();
@@ -1412,7 +1420,7 @@ function switchSession(k){
   if(!draft){ ensureDraft(); }
   if(draft.session===k) return;
   const go=function(){
-    const keep={ date:draft.date, created:draft.created, autoreg:draft.autoreg, peso:draft.peso, gym:draft.gym, meals:draft.meals, kcal:draft.kcal, bpm:draft.bpm }; // check-in do dia sobrevive à troca
+    const keep={ date:draft.date, created:draft.created, autoreg:draft.autoreg, peso:draft.peso, gym:draft.gym, meals:draft.meals, kcal:draft.kcal, bpm:draft.bpm, crono:draft.crono }; // check-in do dia e cronômetro sobrevivem à troca
     draft=freshDraft(k);
     Object.assign(draft, keep);
     persist(); renderHoje();
@@ -1420,6 +1428,19 @@ function switchSession(k){
   if(hasLoggedData(draft)){ appConfirm("Você já registrou séries nesta sessão. Trocar de treino vai apagar o registro de hoje.",go); return; }
   go();
 }
+
+/* ---------- cronômetro do treino (Iniciar → Pausar/Retomar; duração vai pro registro) ---------- */
+function cronoState(){ if(!draft.crono||typeof draft.crono!=="object") draft.crono={el:0,run:false,ts:null}; return draft.crono; }
+function cronoElapsed(){ const c=cronoState(); return Math.max(0,Math.round(c.el + (c.run&&c.ts ? (Date.now()-c.ts)/1000 : 0))); }
+function cronoToggle(){
+  const c=cronoState();
+  if(c.run){ c.el=cronoElapsed(); c.run=false; c.ts=null; }   // pausa
+  else { c.ts=Date.now(); c.run=true; }                        // inicia / retoma
+  persist(); updateFinishBar();
+}
+function fmtCrono(s){ s=Math.max(0,Math.round(s)); const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60; return (h?h+":"+String(m).padStart(2,"0"):String(m))+":"+String(ss).padStart(2,"0"); }
+function fmtDur(s){ const m=Math.round(s/60); if(m<1) return Math.round(s)+"s"; if(m<60) return m+" min"; return Math.floor(m/60)+"h"+String(m%60).padStart(2,"0"); }
+function cronoTick(){ if(currentTab!=="hoje"||!draft||!draft.crono||!draft.crono.run) return; const bc=$("#btnCrono"); if(bc) bc.textContent="⏸ "+fmtCrono(cronoElapsed()); }
 
 /* nova academia via folha (o prompt() do navegador não aparece no app instalado do iOS) */
 function openAddGym(){
@@ -1473,6 +1494,11 @@ function updateFinishBar(){
   const cnt=$("#exCount"); if(cnt) cnt.textContent=doneN+"/"+total+" séries";
   const fill=$("#pbarFill"); if(fill) fill.style.width=(total?(doneN/total*100):100)+"%";
   $("#finMeta").innerHTML = draft.z2only?`<b>Zona 2</b>`:`<b>${doneN}</b>/${total} séries`;
+  const bc=$("#btnCrono");
+  if(bc){ const c=cronoState(); const started=c.run||c.el>0;
+    bc.className="btn-crono"+(c.run?" run":(started?" paused":""));
+    bc.textContent=c.run ? "⏸ "+fmtCrono(cronoElapsed()) : (started ? "▶ "+fmtCrono(c.el) : "▶ Iniciar");
+  }
 }
 
 /* ============================================================
@@ -1524,6 +1550,7 @@ function buildMarkdown(rec){
   if(rec.sonoH||rec.sonoQ) ci.push(`**Sono:** ${rec.sonoH?rec.sonoH+"h":""}${rec.sonoQ?" ("+rec.sonoQ+")":""}`);
   if(rec.enjoo) ci.push(`**Enjoo:** ${rec.enjoo}`);
   if(rec.energia) ci.push(`**Energia:** ${rec.energia}`);
+  if(rec.duracao) ci.push(`**Duração:** ${fmtDur(rec.duracao)}`);
   if(rec.kcal) ci.push(`**Calorias:** ${rec.kcal} kcal`);
   if(rec.bpm) ci.push(`**FC final:** ${rec.bpm} bpm`);
   md+=ci.join(" · ")+"\n\n";
@@ -1604,8 +1631,11 @@ function buildMarkdown(rec){
 function fileName(rec){ return `${rec.date} - ${PROGRAM[rec.session].name}.md`; }
 
 function finishWorkout(){
+  // para o cronômetro e congela a duração
+  const c=cronoState(); if(c.run){ c.el=cronoElapsed(); c.run=false; c.ts=null; persist(); updateFinishBar(); }
   // snapshot
   const rec=JSON.parse(JSON.stringify(draft));
+  rec.duracao=(rec.crono&&rec.crono.el)?Math.round(rec.crono.el):null; delete rec.crono;
   rec.block=currentBlock().n; rec.week=currentWeek();
   // limpa reps pré-preenchidas (s.pre) de séries não realizadas — reps escolhidas pelo usuário ficam, mesmo sem peso (ex.: exercício corporal)
   Object.values(rec.ex||{}).forEach(d=>{ delete d.open; if(Array.isArray(d.sets)) d.sets.forEach(s=>{ if(s.pre&&!s.done&&!s.peso&&!s.esf) s.reps=""; delete s.pre; }); });
@@ -1648,7 +1678,7 @@ function openExport(rec){
   const fn=fileName(rec);
   const sheet=$("#sheet");
   const score=(rec.score!=null)?rec.score:((rec.z2only||workSetsOf(rec).total>0)?scoreWorkout(rec):null);
-  const musChips=Object.entries(musclesOf(rec)).map(([g,n])=>`<span class="tg mus">${esc(g)} ×${n}</span>`).join("");
+  const musChips=(rec.duracao?`<span class="tg">⏱ ${fmtDur(rec.duracao)}</span>`:"")+Object.entries(musclesOf(rec)).map(([g,n])=>`<span class="tg mus">${esc(g)} ×${n}</span>`).join("");
   sheet.innerHTML=`
     <div class="grab"></div>
     <h2>Treino registrado ✅</h2>
@@ -1754,6 +1784,7 @@ function renderHist(){
       <div class="hist-stats">
         ${h.z2only?`<span>🚶 só Zona 2</span>`:`<span><b>${done}/${total}</b> exercícios</span>`}
         ${h.score!=null?`<span>nota <b>${fmtNum(h.score)}</b>/10</span>`:""}
+        ${h.duracao?`<span>⏱ <b>${fmtDur(h.duracao)}</b></span>`:""}
         ${h.peso?`<span>peso <b>${h.peso}</b>kg</span>`:""}
         ${h.sonoH?`<span>sono <b>${h.sonoH}</b>h</span>`:""}
         ${h.cardioDone?`<span>Z2 <b>${h.cardioMin||"✓"}</b>${h.cardioMin?"min":""}</span>`:""}
@@ -2289,6 +2320,7 @@ function setTab(t){
 document.querySelectorAll(".tab").forEach(x=>x.onclick=()=>setTab(x.dataset.tab));
 $("#gearBtn").onclick=openSettings;
 $("#btnFinish").onclick=finishWorkout;
+$("#btnCrono").onclick=cronoToggle;
 $("#scrim").onclick=function(e){ if(e.target===this) closeSheet(); };
 // fechar qualquer folha: toque no risquinho (grab) ou arrastando o topo dela pra baixo (gesto iOS)
 $("#sheet").addEventListener("click",function(e){ if(e.target.classList && e.target.classList.contains("grab")) closeSheet(); });
@@ -2324,8 +2356,8 @@ updateWeekLabel();
   }catch(e){}
 })();
 
-// barra de descanso (contagem regressiva + alerta)
-setInterval(rcdTick,1000);
+// barra de descanso (contagem regressiva) + cronômetro do treino
+setInterval(function(){ rcdTick(); cronoTick(); },1000);
 // ao voltar do background, retoma o áudio (iOS deixa "interrupted") e atualiza a contagem na hora
 document.addEventListener("visibilitychange",function(){ if(!document.hidden){ try{ const ac=window.__ac; if(ac&&ac.state!=="running") ac.resume(); }catch(e){} rcdTick(); } });
 
