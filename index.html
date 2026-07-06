@@ -645,6 +645,7 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 
 <script>
 "use strict";
+const APP_VERSION="v14"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
 
 /* ============================================================
    PROGRAMA — PPL 6x Spine-Safe (jun/2026) — embutido
@@ -2246,7 +2247,8 @@ function openSettings(){
     <div class="set-block" style="border-bottom:none">
       <div class="prose" style="font-size:12.5px;color:var(--mute)">
         <b style="color:var(--dim)">Instalar no iPhone:</b> abra no Safari → Compartilhar → Adicionar à Tela de Início.<br>
-        <b style="color:var(--dim)">Volta pro projeto:</b> Finalizar → Exportar → Salvar em Arquivos → Saúde › Treinos.
+        <b style="color:var(--dim)">Volta pro projeto:</b> Finalizar → Exportar → Salvar em Arquivos → Saúde › Treinos.<br>
+        <b style="color:var(--dim)">Versão do app:</b> ${APP_VERSION}
       </div>
     </div>
     <button class="sheet-close" id="setClose">Fechar</button>`;
@@ -2273,7 +2275,7 @@ let currentTab="hoje";
 function setTab(t){
   currentTab=t;
   document.body.classList.toggle("coachlock", t==="coach"); // Coach: trava a página, só o feed rola
-  if(t==="coach") coachViewportFix();
+  coachViewportFix(); // fora do Coach, limpa o translateY; no Coach, encaixa no viewport
   document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.tab===t));
   ["hoje","nutri","coach","hist","prog"].forEach(n=>$("#view-"+n).classList.toggle("hidden",n!==t));
   if(t==="hoje") renderHoje();
@@ -2328,18 +2330,25 @@ setInterval(rcdTick,1000);
 document.addEventListener("visibilitychange",function(){ if(!document.hidden){ try{ const ac=window.__ac; if(ac&&ac.state!=="running") ac.resume(); }catch(e){} rcdTick(); } });
 
 // aba Coach: encaixa a tela na área visível — quando o teclado do iOS abre, o visualViewport encolhe
-// e o layout acompanha, em vez de a página ser empurrada pra baixo (abas sempre no enquadro)
+// e o layout acompanha, em vez de a página ser empurrada pra baixo (abas sempre no enquadro).
+// Além do height, compensa o offsetTop: em PWA standalone o iOS às vezes EMPURRA a página inteira
+// pra revelar o campo — o translateY traz o app de volta pro enquadro visível.
 function coachViewportFix(){
-  if(currentTab!=="coach") return;
+  const app=document.getElementById("app");
+  if(currentTab!=="coach"){ if(app) app.style.transform=""; return; }
   const vv=window.visualViewport;
   document.documentElement.style.setProperty("--vvh",(vv?vv.height:window.innerHeight)+"px");
   window.scrollTo(0,0);
+  if(app) app.style.transform=(vv&&vv.offsetTop>0)?("translateY("+vv.offsetTop+"px)"):"";
   const feed=document.querySelector(".coach-feed"); if(feed) feed.scrollTop=feed.scrollHeight;
 }
 if(window.visualViewport){
   window.visualViewport.addEventListener("resize",coachViewportFix);
   window.visualViewport.addEventListener("scroll",coachViewportFix);
 }
+// o teclado anima em ~250–500ms e nem sempre dispara resize no standalone — re-aplica após foco/desfoco
+document.addEventListener("focusin",function(e){ if(currentTab==="coach"&&e.target&&e.target.id==="coachText"){ setTimeout(coachViewportFix,80); setTimeout(coachViewportFix,350); setTimeout(coachViewportFix,750); } });
+document.addEventListener("focusout",function(){ if(currentTab==="coach"){ setTimeout(coachViewportFix,80); setTimeout(coachViewportFix,400); } });
 $("#rcdMinus").onclick=()=>rcdAdjust(-15);
 $("#rcdPlus").onclick=()=>rcdAdjust(15);
 $("#rcdSkip").onclick=rcdSkip;
