@@ -596,6 +596,36 @@ body.coachlock #view-coach{flex:1;min-height:0;display:flex;flex-direction:colum
 body.coachlock .coach-status,body.coachlock .coach-chips,body.coachlock .coach-cowork,body.coachlock .coach-key-cta{flex:0 0 auto;}
 body.coachlock .coach-feed{flex:1;min-height:0;max-height:none;margin-bottom:8px;}
 body.coachlock .coach-input{position:static;padding-top:6px;}
+
+/* ---------- registro rápido de comida (texto livre + IA + código de barras) ---------- */
+.prot-hero{background:linear-gradient(160deg,#FFFFFF,#EEF3FC);border:1px solid var(--border);border-radius:var(--radius);padding:15px 16px;margin-bottom:14px;}
+.prot-hero .ph-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px;}
+.prot-hero .ph-big{font-family:var(--display);font-weight:800;font-size:30px;line-height:1;color:var(--accent-2);}
+.prot-hero .ph-big small{font-family:var(--body);font-weight:600;font-size:14px;color:var(--mute);}
+.prot-hero .ph-lbl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);}
+.prot-bar{height:9px;background:var(--surface-3);border-radius:5px;overflow:hidden;}
+.prot-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--verde),#0FA85A);width:0;transition:width .4s;}
+.prot-macros{display:flex;gap:14px;margin-top:11px;font-size:12px;color:var(--dim);}
+.prot-macros b{font-family:var(--mono);color:var(--text);}
+.qlog textarea{width:100%;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:11px;padding:11px;color:var(--text);font-size:14px;resize:none;min-height:52px;outline:none;font-family:var(--body);}
+.qlog-btn{width:100%;margin-top:9px;background:linear-gradient(135deg,var(--accent),#3068DA);color:#FFFFFF;font-weight:700;font-size:14px;border-radius:11px;padding:12px;display:flex;align-items:center;justify-content:center;gap:8px;}
+.qlog-btn:disabled{opacity:.55;}
+.qlog-bar{display:flex;gap:8px;margin-top:9px;}
+.qlog-bar input{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:10px;padding:10px 11px;color:var(--text);font-family:var(--mono);font-size:14px;outline:none;}
+.qlog-bar button{flex:0 0 auto;background:var(--surface-3);border:1px solid var(--border-soft);border-radius:10px;padding:0 14px;font-size:13px;font-weight:600;color:var(--dim);}
+.qlog-err{font-size:12px;color:var(--vermelho);margin-top:8px;line-height:1.4;}
+.qlog-recent{display:flex;gap:6px;overflow-x:auto;margin-top:11px;padding-bottom:2px;scrollbar-width:none;}
+.qlog-recent::-webkit-scrollbar{display:none;}
+.qchip{flex:0 0 auto;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:500;color:var(--dim);white-space:nowrap;}
+.qchip b{color:var(--accent-2);font-family:var(--mono);}
+.logitem{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border-soft);}
+.logitem .li-b{flex:1;min-width:0;}
+.logitem .li-n{font-size:14px;font-weight:500;}
+.logitem .li-m{font-size:11.5px;color:var(--mute);font-family:var(--mono);margin-top:2px;}
+.logitem .li-p{flex:0 0 auto;font-family:var(--mono);font-size:13px;color:var(--verde);font-weight:600;}
+.logitem .li-del{flex:0 0 auto;width:30px;color:var(--mute);background:none;border:none;font-size:16px;}
+.logtot{display:flex;justify-content:space-between;align-items:baseline;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);font-size:12.5px;color:var(--dim);}
+.logtot b{font-family:var(--mono);color:var(--text);}
 </style>
 </head>
 <body>
@@ -651,7 +681,7 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 
 <script>
 "use strict";
-const APP_VERSION="v15"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
+const APP_VERSION="v16"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
 
 /* ============================================================
    PROGRAMA — PPL 6x Spine-Safe (jun/2026) — embutido
@@ -866,7 +896,7 @@ function allGyms(){ return GYMS_BASE.concat((settings.gyms||[]).filter(g=>GYMS_B
 /* ============================================================
    ESTADO
    ============================================================ */
-const LS_DRAFT="treino_draft_v1", LS_HIST="treino_hist_v1", LS_SET="treino_set_v1", LS_COACH="treino_coach_v1";
+const LS_DRAFT="treino_draft_v1", LS_HIST="treino_hist_v1", LS_SET="treino_set_v1", LS_COACH="treino_coach_v1", LS_FOOD="treino_food_v1";
 function load(k,def){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):def;}catch(e){return def;} }
 function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
 
@@ -876,6 +906,7 @@ if(settings.apiKey===undefined) settings.apiKey="";
 if(!Array.isArray(settings.gyms)) settings.gyms=[];
 if(settings.lastGym===undefined) settings.lastGym="";
 if(settings.profile===undefined) settings.profile="";
+if(settings.protGoal===undefined) settings.protGoal=170; // meta diária de proteína (g) — métrica-herói da nutrição
 
 /* ---------- plano editável (fica só no aparelho; sobrepõe o PROGRAM) ---------- */
 const LS_PLAN="treino_plan_v1";
@@ -939,13 +970,13 @@ function freshDraft(sessKey){
     warmDone:false, coreDone:false, coreNota:"",
     z2only:false, nota:"", kcal:"", bpm:"",
     crono:{el:0,run:false,ts:null}, // cronômetro do treino: el=segundos acumulados; run+ts=contando desde ts (época)
-    meals:{check:{},qadj:{},extras:"",aguaL:"",creatina:false},
+    meals:{check:{},qadj:{},extras:"",aguaL:"",creatina:false,logged:[]},
     ex:{}, // id -> {alt, nota, sets:[{w,peso,reps,esf,done,rest}]}
     created:todayStr() };
 }
 function newSet(w){ return {w:!!w,t:"",peso:"",reps:"",esf:"",done:false,rest:null}; }
 function fmtRest(s){ if(s==null||isNaN(s)) return "—"; s=Math.max(0,Math.round(s)); const m=Math.floor(s/60),r=s%60; return m>0?(m+":"+String(r).padStart(2,"0")):(r+"s"); }
-function ensureMeals(){ if(draft){ const m=(draft.meals=draft.meals||{}); m.check=m.check||{}; m.qadj=m.qadj||{}; if(m.extras==null)m.extras=""; if(m.aguaL==null)m.aguaL=""; if(m.creatina==null)m.creatina=false; } }
+function ensureMeals(){ if(draft){ const m=(draft.meals=draft.meals||{}); m.check=m.check||{}; m.qadj=m.qadj||{}; if(m.extras==null)m.extras=""; if(m.aguaL==null)m.aguaL=""; if(m.creatina==null)m.creatina=false; if(!Array.isArray(m.logged))m.logged=[]; } }
 function ensureSets(e){ const d=draft.ex[e.id]||(draft.ex[e.id]={alt:false,nota:"",sets:[]}); if(!Array.isArray(d.sets))d.sets=[]; if(d.sets.length===0){ const t=adjTarget(e), tr=topReps(t.rr); for(let i=0;i<t.sets;i++){ const s=newSet(false); if(tr){ s.reps=String(tr); s.pre=true; } d.sets.push(s); } } return d; } // s.pre = reps pré-preenchida (não é registro do usuário)
 let activeRest=null; // {id, ts} — exercício em que o descanso está correndo
 let openStrip=null; // {ex,si,field} — régua de kg/reps aberta
@@ -1612,12 +1643,19 @@ function buildMarkdown(rec){
   md+="\n";
   if(rec.nota) md+=`**Como foi:** ${rec.nota}\n\n`;
   const ml=rec.meals;
-  if(ml && (ml.check||ml.extras||ml.aguaL||ml.creatina)){
+  const logged=(ml&&Array.isArray(ml.logged))?ml.logged:[];
+  if(ml && (ml.check||ml.extras||ml.aguaL||ml.creatina||logged.length)){
     let plan=0,cons=0; const eaten=[];
     MEAL_PLAN.forEach((meal,mi)=>meal.foods.forEach((f,fi)=>{ plan+=f.k; const key=mi+"-"+fi; if(ml.check&&ml.check[key]){ cons+=f.k; eaten.push(f.n+((ml.qadj&&ml.qadj[key])?` (${ml.qadj[key]})`:"")); } }));
-    const parts=[`consumido ≈${cons}/${plan} kcal`,`creatina ${ml.creatina?"✅":"—"}`];
+    // total de macros dos itens registrados por texto/IA/código de barras
+    const lt={kcal:0,prot:0,carb:0,gord:0,fib:0}; logged.forEach(it=>{ lt.kcal+=+it.kcal||0; lt.prot+=+it.prot||0; lt.carb+=+it.carb||0; lt.gord+=+it.gord||0; lt.fib+=+it.fib||0; });
+    const parts=[];
+    if(logged.length) parts.push(`proteína ${fmtNum(Math.round(lt.prot))}/${(+rec.protGoal||+settings.protGoal||170)} g`, `≈${Math.round(lt.kcal)} kcal registradas`);
+    if(cons) parts.push(`plano ≈${cons}/${plan} kcal`);
+    parts.push(`creatina ${ml.creatina?"✅":"—"}`);
     if(ml.aguaL) parts.push(`água ${ml.aguaL} L`);
     md+=`**Nutrição:** ${parts.join(" · ")}\n`;
+    if(logged.length){ md+=`Registrado: ${logged.map(it=>cell(it.nome+(it.q?" "+it.q:"")+` [${fmtNum(it.prot)}g P, ${Math.round(it.kcal)} kcal]`)).join("; ")}.\n`; }
     if(eaten.length) md+=`Comido do plano: ${eaten.map(cell).join(", ")}.\n`;
     if(ml.extras) md+=`Comi a mais: ${cell(ml.extras)}\n`;
     md+="\n";
@@ -1636,6 +1674,7 @@ function finishWorkout(){
   // snapshot
   const rec=JSON.parse(JSON.stringify(draft));
   rec.duracao=(rec.crono&&rec.crono.el)?Math.round(rec.crono.el):null; delete rec.crono;
+  rec.protGoal=+settings.protGoal||170;
   rec.block=currentBlock().n; rec.week=currentWeek();
   // limpa reps pré-preenchidas (s.pre) de séries não realizadas — reps escolhidas pelo usuário ficam, mesmo sem peso (ex.: exercício corporal)
   Object.values(rec.ex||{}).forEach(d=>{ delete d.open; if(Array.isArray(d.sets)) d.sets.forEach(s=>{ if(s.pre&&!s.done&&!s.peso&&!s.esf) s.reps=""; delete s.pre; }); });
@@ -1981,9 +2020,13 @@ function buildCoachSystem(){
     s+="HOJE (em andamento): "+fmtSess(draft);
     const ml=draft.meals||{}; let plan=0,cons=0;
     MEAL_PLAN.forEach((meal,mi)=>meal.foods.forEach((f,fi)=>{ plan+=f.k; if(ml.check&&ml.check[mi+"-"+fi]) cons+=f.k; }));
-    const np=[`consumido ≈${cons}/${plan} kcal`,"creatina "+(ml.creatina?"sim":"não")];
+    const lg=Array.isArray(ml.logged)?ml.logged:[]; let lp=0,lk=0; lg.forEach(it=>{ lp+=+it.prot||0; lk+=+it.kcal||0; });
+    const np=[];
+    if(lg.length) np.push(`proteína ${Math.round(lp)}/${+settings.protGoal||170}g`, `≈${Math.round(lk)} kcal registradas`);
+    np.push(`plano ≈${cons}/${plan} kcal`,"creatina "+(ml.creatina?"sim":"não"));
     if(ml.aguaL) np.push("água "+ml.aguaL+"L");
     s+=" | nutrição hoje: "+np.join(", ");
+    if(lg.length) s+=" | itens: "+lg.map(it=>it.nome+(it.q?" "+it.q:"")).join(", ");
     if(ml.extras) s+=" | comeu a mais: "+ml.extras;
     if(draft.enjoo) s+=" | enjoo "+draft.enjoo;
     s+="\n";
@@ -2177,15 +2220,121 @@ function renderCoach(){
 /* ============================================================
    NUTRIÇÃO
    ============================================================ */
+/* ============================================================
+   REGISTRO RÁPIDO DE COMIDA — texto livre (IA) + código de barras (Open Food Facts) + cache offline
+   ============================================================ */
+let foodCache = load(LS_FOOD, []); if(!Array.isArray(foodCache)) foodCache=[];
+function saveFoods(){ save(LS_FOOD, foodCache.slice(0,60)); }
+const foodKey=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g," ").trim();
+function rememberFood(it){ // guarda no cache de recentes (dedup por nome+quantidade), mais recente primeiro
+  const k=foodKey(it.nome+"|"+(it.q||""));
+  foodCache=foodCache.filter(f=>foodKey(f.nome+"|"+(f.q||""))!==k);
+  foodCache.unshift({nome:it.nome,q:it.q||"",kcal:+it.kcal||0,prot:+it.prot||0,carb:+it.carb||0,gord:+it.gord||0,fib:+it.fib||0});
+  saveFoods();
+}
+function normItem(o){ // sanitiza um item vindo da IA/API
+  const n=v=>{ const x=parseFloat(String(v==null?"":v).replace(",",".")); return isNaN(x)?0:Math.max(0,Math.round(x*10)/10); };
+  const nome=String(o.nome||o.name||"").trim().slice(0,80); if(!nome) return null;
+  return {nome:nome, q:String(o.q||o.quantidade||o.porcao||"").trim().slice(0,40), kcal:Math.round(n(o.kcal||o.calorias||o.energia)), prot:n(o.prot||o.proteina||o.protein), carb:n(o.carb||o.carboidrato||o.carbs), gord:n(o.gord||o.gordura||o.fat||o.lipideos), fib:n(o.fib||o.fibra||o.fiber)};
+}
+/* usa o Claude (via a chave do próprio app) pra estimar macros de uma descrição em português */
+async function parseFoodText(text){
+  const key=(settings.apiKey||"").trim();
+  if(!key) throw {noKey:true};
+  const sys=`Você é um calculador de macros nutricionais brasileiro. Recebe uma descrição de comida em português (com quantidades caseiras: "colher", "concha", "fatia", "prato", "unidade", gramas, ml) e devolve os macros ESTIMADOS de cada alimento separadamente, usando valores da culinária brasileira (TACO/TBCA). Responda SOMENTE com um array JSON válido, sem texto antes ou depois, no formato:
+[{"nome":"Patinho grelhado","q":"180 g","kcal":320,"prot":56,"carb":0,"gord":10,"fib":0}]
+Regras: "kcal" inteiro; "prot"/"carb"/"gord"/"fib" em gramas (número, pode ter 1 casa decimal); "q" = a quantidade que você assumiu. Um objeto por alimento distinto. Se a quantidade não for dada, assuma uma porção caseira típica e diga qual em "q". Nunca invente alimentos que não estão na descrição.`;
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
+    "content-type":"application/json","x-api-key":key,
+    "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"
+  },body:JSON.stringify({model:"claude-haiku-4-5",max_tokens:1200,system:sys,
+    messages:[{role:"user",content:text},{role:"assistant",content:"["}]})}); // prefill "[" força JSON
+  if(!res.ok){ if(res.status===401) throw {msg:"Chave de API inválida ou sem crédito (confira em ⚙ Ajustes)."}; if(res.status===429) throw {msg:"Limite de uso — tente daqui a pouco."}; throw {msg:"Erro "+res.status+" ao calcular."}; }
+  const data=await res.json();
+  let txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+  txt="["+txt; const a=txt.indexOf("["), b=txt.lastIndexOf("]"); if(a<0||b<0) throw {msg:"Não consegui ler os macros. Tente descrever de outro jeito."};
+  let arr; try{ arr=JSON.parse(txt.slice(a,b+1)); }catch(e){ throw {msg:"Não consegui ler os macros. Tente descrever de outro jeito."}; }
+  const items=(Array.isArray(arr)?arr:[arr]).map(normItem).filter(Boolean);
+  if(!items.length) throw {msg:"Nenhum alimento reconhecido."};
+  return items;
+}
+/* código de barras via Open Food Facts (aberto, sem conta; macros por 100 g) */
+async function lookupBarcode(code){
+  code=String(code||"").replace(/\D/g,""); if(code.length<6) throw {msg:"Código de barras inválido."};
+  let data;
+  try{ const res=await fetch("https://world.openfoodfacts.org/api/v2/product/"+code+".json?fields=product_name,brands,nutriments");
+    if(!res.ok) throw 0; data=await res.json();
+  }catch(e){ throw {msg:"Sem internet ou produto não encontrado."}; }
+  if(!data||data.status!==1||!data.product) throw {msg:"Produto não encontrado no Open Food Facts."};
+  const p=data.product, nu=p.nutriments||{};
+  const base=(p.product_name||"Produto").trim(), brand=p.brands?String(p.brands).split(",")[0].trim():"";
+  const nome=(brand && base.toLowerCase().indexOf(brand.toLowerCase())<0)?base+" ("+brand+")":base; // não duplica a marca já contida no nome
+  const g=k=>{ const x=nu[k]; return (x==null||isNaN(x))?0:Math.max(0,Math.round(+x*10)/10); };
+  return normItem({nome:nome.slice(0,80), q:"100 g", kcal:g("energy-kcal_100g")||Math.round(g("energy_100g")/4.184), prot:g("proteins_100g"), carb:g("carbohydrates_100g"), gord:g("fat_100g"), fib:g("fiber_100g")});
+}
+function loggedTotals(){ const t={kcal:0,prot:0,carb:0,gord:0,fib:0}; (draft.meals.logged||[]).forEach(it=>{ t.kcal+=+it.kcal||0; t.prot+=+it.prot||0; t.carb+=+it.carb||0; t.gord+=+it.gord||0; t.fib+=+it.fib||0; }); Object.keys(t).forEach(k=>t[k]=Math.round(t[k]*10)/10); return t; }
+function addLoggedItems(items){ items.forEach(it=>{ draft.meals.logged.push(it); rememberFood(it); }); persist(); renderNutri(); }
+
+function renderQuickLog(){
+  const card=el("div","card qlog");
+  const hasKey=!!(settings.apiKey||"").trim();
+  const logged=draft.meals.logged||[];
+  card.innerHTML=`<div class="section-label">Registro rápido</div>
+    <textarea id="qlogText" placeholder="o que você comeu? ex.: 180g de patinho, 4 colheres de arroz, 1 concha de feijão"></textarea>
+    <button class="qlog-btn" id="qlogCalc"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/></svg>Calcular macros com IA</button>
+    <div class="qlog-bar"><input id="qlogBar" inputmode="numeric" placeholder="código de barras (digite/cole)"><button id="qlogBarBtn">Buscar</button></div>
+    <div class="qlog-err hidden" id="qlogErr"></div>
+    ${!hasKey?`<div class="qlog-err" style="color:var(--mute)">Sem chave de API — configure em ⚙ pra calcular por texto. O código de barras e os recentes funcionam sem chave.</div>`:""}
+    ${foodCache.length?`<div class="qlog-recent">${foodCache.slice(0,20).map((f,i)=>`<button class="qchip" data-fav="${i}">${esc(f.nome)}${f.q?" · "+esc(f.q):""} <b>${fmtNum(f.prot)}g</b></button>`).join("")}</div>`:""}
+    ${logged.length?`<div id="qlogList"></div>`:`<div class="foot" style="padding:14px 4px 2px">Nada registrado hoje. Descreva o que comeu que a IA calcula proteína, carbo, gordura e calorias — e guarda pra virar atalho.</div>`}`;
+
+  const errEl=card.querySelector("#qlogErr");
+  const showErr=m=>{ errEl.textContent=m; errEl.classList.remove("hidden"); };
+  const calcBtn=card.querySelector("#qlogCalc"), ta=card.querySelector("#qlogText");
+  ta.addEventListener("input",()=>{ ta.style.height="auto"; ta.style.height=Math.min(140,ta.scrollHeight)+"px"; });
+  calcBtn.onclick=async()=>{
+    const t=ta.value.trim(); if(!t) return;
+    errEl.classList.add("hidden"); calcBtn.disabled=true; calcBtn.textContent="Calculando…";
+    try{ const items=await parseFoodText(t); addLoggedItems(items); }
+    catch(e){ calcBtn.disabled=false; calcBtn.innerHTML="Calcular macros com IA"; if(e&&e.noKey){ openSettings(); } else showErr((e&&e.msg)||"Não consegui calcular agora."); }
+  };
+  const barBtn=card.querySelector("#qlogBarBtn"), barIn=card.querySelector("#qlogBar");
+  barBtn.onclick=async()=>{
+    const c=barIn.value.trim(); if(!c) return;
+    errEl.classList.add("hidden"); barBtn.disabled=true; barBtn.textContent="…";
+    try{ const it=await lookupBarcode(c); addLoggedItems([it]); }
+    catch(e){ barBtn.disabled=false; barBtn.textContent="Buscar"; showErr((e&&e.msg)||"Não encontrei esse código."); }
+  };
+  card.querySelectorAll("[data-fav]").forEach(b=>b.onclick=()=>{ const f=foodCache[+b.dataset.fav]; if(f) addLoggedItems([Object.assign({},f)]); });
+
+  if(logged.length){
+    const list=card.querySelector("#qlogList");
+    list.innerHTML=logged.map((it,i)=>`<div class="logitem"><div class="li-b"><div class="li-n">${esc(it.nome)}</div><div class="li-m">${it.q?esc(it.q)+" · ":""}${it.kcal} kcal · C ${fmtNum(it.carb)} G ${fmtNum(it.gord)} F ${fmtNum(it.fib)}</div></div><div class="li-p">${fmtNum(it.prot)}g</div><button class="li-del" data-del="${i}" aria-label="remover">×</button></div>`).join("");
+    const t=loggedTotals();
+    const totEl=el("div","logtot"); totEl.innerHTML=`<span>Total registrado</span><span><b>${fmtNum(t.prot)}g</b> prot · <b>${t.kcal}</b> kcal</span>`;
+    list.appendChild(totEl);
+    list.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ draft.meals.logged.splice(+b.dataset.del,1); persist(); renderNutri(); });
+  }
+  return card;
+}
+
 function renderNutri(){
   ensureDraft(); ensureMeals();
   const v=$("#view-nutri"); v.innerHTML="";
   const ml=draft.meals;
 
-  const banner=el("div","banner warn"); banner.style.marginBottom="14px";
-  banner.innerHTML=`<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="#8A5A00" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div>Plano de hoje em <b>esboço</b> — kcal são estimativas. O plano completo a gente fecha depois da sua <b>consulta médica</b>; me manda seus alimentos que eu encodo o seu de verdade.</div>`;
-  v.appendChild(banner);
+  // ----- métrica-herói: proteína do dia -----
+  const tot=loggedTotals();
+  const goal=+settings.protGoal||170;
+  const ppct=Math.min(100,Math.round(tot.prot/goal*100));
+  const hero=el("div","prot-hero");
+  hero.innerHTML=`<div class="ph-top"><div><div class="ph-lbl">Proteína hoje</div><div class="ph-big">${fmtNum(tot.prot)}<small> / ${goal} g</small></div></div><div class="ph-lbl">${ppct}%</div></div>
+    <div class="prot-bar"><i style="width:${ppct}%"></i></div>
+    <div class="prot-macros"><span>Carbo <b>${fmtNum(tot.carb)}g</b></span><span>Gordura <b>${fmtNum(tot.gord)}g</b></span><span>Fibra <b>${fmtNum(tot.fib)}g</b></span><span>≈<b>${tot.kcal}</b> kcal</span></div>`;
+  v.appendChild(hero);
+
+  // ----- registro rápido (texto livre → IA + código de barras) -----
+  v.appendChild(renderQuickLog());
 
   let plan=0,cons=0;
   MEAL_PLAN.forEach((meal,mi)=>meal.foods.forEach((f,fi)=>{ plan+=f.k; if(ml.check[mi+"-"+fi]) cons+=f.k; }));
@@ -2256,8 +2405,13 @@ function openSettings(){
       <textarea class="set-input" id="setProfile" rows="5" placeholder="Ex.: homem, 40 anos, ~105 kg, objetivo perder gordura preservando músculo; restrição lombar — coluna neutra, sem carga axial/flexão lombar; ..." style="font-family:var(--body);resize:vertical;min-height:96px;line-height:1.5;">${(settings.profile||"").replace(/</g,"&lt;")}</textarea>
     </div>
     <div class="set-block">
+      <div class="sl">Meta de proteína <span style="color:var(--accent-2)">— métrica-herói</span></div>
+      <div class="sd">Alvo diário em gramas, mostrado no topo da aba Nutrição. Em déficit calórico, bater a proteína é a prioridade nº1 pra preservar músculo (~1,6–2,2 g/kg).</div>
+      <div class="inline-input"><input class="set-input" id="setProt" inputmode="numeric" value="${+settings.protGoal||170}" style="max-width:120px"><span class="suffix" style="margin-left:8px">g/dia</span></div>
+    </div>
+    <div class="set-block">
       <div class="sl">Modelo do Coach</div>
-      <div class="sd">Opus é o mais capaz; Sonnet/Haiku são mais baratos.</div>
+      <div class="sd">Opus é o mais capaz; Sonnet/Haiku são mais baratos. (O cálculo de macros do registro rápido usa sempre o Haiku, mais rápido e barato.)</div>
       <select class="set-input" id="setModel" style="font-family:var(--body)">${models.map(m=>`<option value="${m[0]}" ${settings.model===m[0]?"selected":""}>${m[1]}</option>`).join("")}</select>
     </div>
     <div class="set-block">
@@ -2288,6 +2442,7 @@ function openSettings(){
   sheet.querySelector("#setKey").addEventListener("input",function(){ settings.apiKey=this.value.trim(); sv(); });
   sheet.querySelector("#setProfile").addEventListener("input",function(){ settings.profile=this.value; sv(); });
   sheet.querySelector("#setModel").onchange=function(){ settings.model=this.value; sv(); };
+  sheet.querySelector("#setProt").addEventListener("input",function(){ const v=parseInt(this.value,10); settings.protGoal=(!isNaN(v)&&v>0)?Math.min(400,v):170; sv(); });
   sheet.querySelector("#setWeek").onchange=function(){ settings.week=parseInt(this.value,10); settings.startDate=null; sv(); sheet.querySelector("#setStart").value=""; updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#setStart").onchange=function(){ settings.startDate=this.value||null; sv(); updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#wipe").onclick=function(){
