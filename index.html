@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -582,6 +582,15 @@ input,select,textarea{font-family:var(--body);}
 
 /* ---------- remover do histórico ---------- */
 .hist-del{margin-top:11px;flex:0 0 auto;width:44px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:9px;color:var(--vermelho);font-size:15px;}
+
+/* ---------- aba Coach: tela travada — topo/abas sempre visíveis, só a conversa rola ---------- */
+body.coachlock{overflow:hidden;}
+body.coachlock #app{height:var(--vvh,100dvh);overflow:hidden;display:flex;flex-direction:column;padding-bottom:calc(8px + var(--safe-bottom));}
+body.coachlock .topbar,body.coachlock .tabs{flex:0 0 auto;}
+body.coachlock #view-coach{flex:1;min-height:0;display:flex;flex-direction:column;}
+body.coachlock .coach-status,body.coachlock .coach-chips,body.coachlock .coach-cowork,body.coachlock .coach-key-cta{flex:0 0 auto;}
+body.coachlock .coach-feed{flex:1;min-height:0;max-height:none;margin-bottom:8px;}
+body.coachlock .coach-input{position:static;padding-top:6px;}
 </style>
 </head>
 <body>
@@ -2130,7 +2139,7 @@ function renderCoach(){
   ta.addEventListener("input",()=>{ ta.style.height="auto"; ta.style.height=Math.min(120,ta.scrollHeight)+"px"; });
   const send=()=>{ const t=ta.value.trim(); if(t) coachSend(t); };
   inp.querySelector("#coachSendBtn").onclick=send;
-  if(currentTab==="coach" && (coachMessages.length||coachBusy)) requestAnimationFrame(()=>{ feed.scrollTop=feed.scrollHeight; });
+  if(currentTab==="coach" && (coachMessages.length||coachBusy)){ feed.scrollTop=feed.scrollHeight; requestAnimationFrame(()=>{ feed.scrollTop=feed.scrollHeight; }); }
 }
 
 /* ============================================================
@@ -2263,6 +2272,8 @@ function openSettings(){
 let currentTab="hoje";
 function setTab(t){
   currentTab=t;
+  document.body.classList.toggle("coachlock", t==="coach"); // Coach: trava a página, só o feed rola
+  if(t==="coach") coachViewportFix();
   document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.tab===t));
   ["hoje","nutri","coach","hist","prog"].forEach(n=>$("#view-"+n).classList.toggle("hidden",n!==t));
   if(t==="hoje") renderHoje();
@@ -2315,6 +2326,20 @@ updateWeekLabel();
 setInterval(rcdTick,1000);
 // ao voltar do background, retoma o áudio (iOS deixa "interrupted") e atualiza a contagem na hora
 document.addEventListener("visibilitychange",function(){ if(!document.hidden){ try{ const ac=window.__ac; if(ac&&ac.state!=="running") ac.resume(); }catch(e){} rcdTick(); } });
+
+// aba Coach: encaixa a tela na área visível — quando o teclado do iOS abre, o visualViewport encolhe
+// e o layout acompanha, em vez de a página ser empurrada pra baixo (abas sempre no enquadro)
+function coachViewportFix(){
+  if(currentTab!=="coach") return;
+  const vv=window.visualViewport;
+  document.documentElement.style.setProperty("--vvh",(vv?vv.height:window.innerHeight)+"px");
+  window.scrollTo(0,0);
+  const feed=document.querySelector(".coach-feed"); if(feed) feed.scrollTop=feed.scrollHeight;
+}
+if(window.visualViewport){
+  window.visualViewport.addEventListener("resize",coachViewportFix);
+  window.visualViewport.addEventListener("scroll",coachViewportFix);
+}
 $("#rcdMinus").onclick=()=>rcdAdjust(-15);
 $("#rcdPlus").onclick=()=>rcdAdjust(15);
 $("#rcdSkip").onclick=rcdSkip;
