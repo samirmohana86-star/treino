@@ -566,6 +566,22 @@ input,select,textarea{font-family:var(--body);}
 .plan-apply .pa-ok{background:var(--accent);color:#FFFFFF;font-weight:700;font-size:13px;border-radius:9px;padding:9px 14px;}
 .plan-apply .pa-no{background:var(--surface);border:1px solid var(--border);color:var(--dim);font-weight:600;font-size:13px;border-radius:9px;padding:9px 14px;}
 .plan-applied{font-size:11.5px;color:var(--verde);font-weight:600;}
+
+/* ---------- aquecimento expansível ---------- */
+.warm-more{background:none;border:none;padding:5px 0 0;font-size:12px;font-weight:600;color:var(--accent-2);}
+.wd-item{font-size:12.5px;color:var(--dim);line-height:1.5;margin-top:8px;}
+.wd-item b{color:var(--text);}
+
+/* ---------- exercícios minimizados (accordion) ---------- */
+.ex-top{cursor:pointer;}
+.ex-chev{flex:0 0 auto;width:24px;height:28px;display:grid;place-items:center;color:var(--mute);transition:transform .18s;}
+.ex-chev svg{width:15px;height:15px;}
+.ex.min .ex-chev{transform:rotate(-90deg);}
+.ex.min .setsticker,.ex.min .notewrap,.ex.min .ex-actions,.ex.min .detail,.ex.min .lastlog{display:none;}
+.ex.min .ex-top{padding-bottom:14px;}
+
+/* ---------- remover do histórico ---------- */
+.hist-del{margin-top:11px;flex:0 0 auto;width:44px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:9px;color:var(--vermelho);font-size:15px;}
 </style>
 </head>
 <body>
@@ -626,9 +642,18 @@ input,select,textarea{font-family:var(--body);}
    ============================================================ */
 const GERAL_WARM = "Cardio leve 3–5 min (bike, elíptico ou esteira inclinada) só pra subir a temperatura, sem fadigar.";
 const WARM = {
-  push:["Band pull-apart — 2×15","Rotação externa com elástico — 2×12"],
-  pull:["Gato-camelo — 2×8 (mobilidade suave)","Face pull leve — 2×15"],
-  legs:["Ponte de glúteo — 2×15","Abdução com mini-band — 2×15"]
+  push:[
+    {n:"Band pull-apart", s:"2×15", c:"Segure o elástico à frente do peito com os braços estendidos e abra puxando as escápulas uma contra a outra; volte controlado. Acorda a parte de trás do ombro antes de empurrar."},
+    {n:"Rotação externa com elástico", s:"2×12/lado", c:"Cotovelo colado no corpo, dobrado a 90°; gire o antebraço pra fora contra o elástico, sem afastar o cotovelo do tronco. Aquece o manguito rotador — o seguro do ombro."}
+  ],
+  pull:[
+    {n:"Gato-camelo", s:"2×8", c:"Em 4 apoios, alterne devagar entre arredondar e estender a coluna, sem forçar amplitude nem sentir dor. Mobilidade suave pra \"lubrificar\" a coluna antes de puxar."},
+    {n:"Face pull leve", s:"2×15", c:"Polia na altura do rosto com corda, carga bem leve; puxe separando as mãos em direção às orelhas, cotovelos altos. Prepara o ombro posterior e a postura."}
+  ],
+  legs:[
+    {n:"Ponte de glúteo", s:"2×15", c:"Deitado, pés no chão perto do quadril; suba o quadril apertando o GLÚTEO (não a lombar), segure 1s no topo e desça. Liga o glúteo antes da carga."},
+    {n:"Abdução com mini-band", s:"2×15", c:"Mini-band em volta dos joelhos, semi-agachado; abra os joelhos contra a banda e volte controlado. Ativa o glúteo médio — estabilizador do joelho e protetor da lombar."}
+  ]
 };
 
 const PROGRAM = {
@@ -1085,17 +1110,27 @@ function renderHoje(){
   gb.innerHTML=`<span class="gym-ic">📍</span><select id="gymSel">${gyms.map(g=>'<option '+(g===draft.gym?"selected":"")+'>'+esc(g)+'</option>').join("")}<option value="__add__">+ Adicionar academia…</option></select>`;
   v.appendChild(gb);
   gb.querySelector("#gymSel").onchange=function(){
-    if(this.value==="__add__"){ const name=(prompt("Nome da nova academia:")||"").trim(); if(name){ if(GYMS_BASE.indexOf(name)<0 && settings.gyms.indexOf(name)<0) settings.gyms.push(name); draft.gym=name; settings.lastGym=name; } save(LS_SET,settings); persist(); renderHoje(); return; }
+    if(this.value==="__add__"){ openAddGym(); return; } // prompt() não abre no PWA standalone do iOS — usa folha própria
     draft.gym=this.value; settings.lastGym=this.value; save(LS_SET,settings); persist();
   };
 
   // ----- warmup -----
   const w=el("div","mini");
+  w.style.alignItems="flex-start";
   w.innerHTML=`<div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M5.6 18.4l2.1-2.1M12 18v3M18.4 18.4l-2.1-2.1M21 12h-3M18.4 5.6l-2.1 2.1" stroke="#6E7682" stroke-width="1.8" stroke-linecap="round"/></svg></div>
-    <div class="tx"><div class="tt">Aquecimento & prehab</div><div class="ds">${GERAL_WARM.split("(")[0]}· ${WARM[sess.warm].join(" · ")}</div></div>
+    <div class="tx"><div class="tt">Aquecimento & prehab</div>
+      <div class="ds">Cardio leve 3–5 min · ${WARM[sess.warm].map(x=>x.n+" — "+x.s).join(" · ")}</div>
+      <button class="warm-more">ver como fazer ▾</button>
+      <div class="warm-det" style="display:none">
+        <div class="wd-item"><b>1. Cardio leve — 3–5 min</b><br>Bike, elíptico ou esteira inclinada em ritmo confortável. Só pra subir a temperatura e a frequência cardíaca — sem gastar energia do treino.</div>
+        ${WARM[sess.warm].map((x,i)=>`<div class="wd-item"><b>${i+2}. ${esc(x.n)} — ${esc(x.s)}</b><br>${esc(x.c)}</div>`).join("")}
+        <div class="wd-item" style="color:var(--mute)">Leve e sem pressa: aquecimento não é treino. Se algo doer aqui, é sinal amarelo pro dia.</div>
+      </div>
+    </div>
     <div class="toggle ${draft.warmDone?"on":""}" id="warmTog"></div>`;
   v.appendChild(w);
   w.querySelector("#warmTog").onclick=function(){ draft.warmDone=!draft.warmDone; this.classList.toggle("on"); persist(); };
+  w.querySelector(".warm-more").onclick=function(){ const det=w.querySelector(".warm-det"); const open=det.style.display==="none"; det.style.display=open?"block":"none"; this.textContent=open?"esconder ▴":"ver como fazer ▾"; };
 
   // ----- VERMELHO: modo mínimo -----
   if(draft.autoreg==="r"){
@@ -1160,7 +1195,9 @@ function renderEx(e,idx){
   const ll=lastLogFor(e.id);
   const isCut = draft.autoreg==="a" && e.cut;
   const allDone = d.sets.length>0 && d.sets.every(s=>s.done);
-  const card=el("div","ex"+(allDone?" done":"")+(isCut?" cut":"")+(d.superNext?" superset":""));
+  const isOpen=!!d.open; // minimizado por padrão; toque no cabeçalho expande
+  const workN=d.sets.filter(s=>!s.w).length, doneW=d.sets.filter(s=>!s.w&&s.done).length;
+  const card=el("div","ex"+(allDone?" done":"")+(isCut?" cut":"")+(d.superNext?" superset":"")+(isOpen?"":" min"));
   card.style.animationDelay=(idx*0.04)+"s";
   card.dataset.id=e.id;
   const alts=e.alts||[];
@@ -1179,6 +1216,7 @@ function renderEx(e,idx){
           ${e.cad?`<span class="tg">cad ${esc(e.cad)}</span>`:""}
           ${e.pause?`<span class="tg">pausa ${esc(e.pause)}</span>`:""}
           <span class="tg mus">${esc(e.g)} · ${stimOf(t.rr)}</span>
+          ${!isOpen?`<span class="tg key">${doneW}/${workN} ✓</span>`:""}
         </div>
         ${isCut?`<span class="cutbadge">corte sugerido hoje</span>`:""}
         ${ll?`<div class="lastlog"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 2M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18Z" stroke="#2E6BE0" stroke-width="1.8" stroke-linecap="round"/></svg>Última vez: ${ll.carga?ll.carga+"kg · ":""}${ll.reps||"—"} (${prettyDate(ll.date)})</div>`
@@ -1186,6 +1224,7 @@ function renderEx(e,idx){
         <span class="prbadge" style="display:none">🏆 Recorde de carga!</span>
         ${d.superNext?'<div class="ss-link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M8 6h8M8 6a3 3 0 0 0 0 6h8a3 3 0 0 1 0 6H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> supersérie com o próximo</div>':""}
       </div>
+      <div class="ex-chev"><svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     </div>
     <div class="setsticker">
       <div class="setlist"></div>
@@ -1217,6 +1256,7 @@ function renderEx(e,idx){
   card.querySelectorAll("[data-alt]").forEach(b=>b.onclick=function(){ d.altIdx=+this.dataset.alt; d.alt=d.altIdx>0; persist(); renderHoje(); });
   card.querySelector('[data-act="edit"]').onclick=function(){ openExEditor(draft.session,e.id); };
   card.querySelector('[data-act="ss"]').onclick=function(){ d.superNext=!d.superNext; persist(); renderHoje(); };
+  card.querySelector(".ex-top").onclick=function(){ d.open=!d.open; persist(); card.replaceWith(renderEx(e,idx)); };
 
   renderSetList(card,e,d,ll);
   return card;
@@ -1361,11 +1401,49 @@ function hasLoggedData(d){ return !!(d&&d.ex)&&Object.keys(d.ex).some(id=>{ cons
 function switchSession(k){
   if(!draft){ ensureDraft(); }
   if(draft.session===k) return;
-  if(hasLoggedData(draft) && !confirm("Você já registrou séries nesta sessão. Trocar de treino vai apagar o registro de hoje. Continuar?")) return;
-  const keep={ date:draft.date, created:draft.created, autoreg:draft.autoreg, peso:draft.peso, gym:draft.gym, meals:draft.meals, kcal:draft.kcal, bpm:draft.bpm }; // check-in do dia sobrevive à troca
-  draft=freshDraft(k);
-  Object.assign(draft, keep);
-  persist(); renderHoje();
+  const go=function(){
+    const keep={ date:draft.date, created:draft.created, autoreg:draft.autoreg, peso:draft.peso, gym:draft.gym, meals:draft.meals, kcal:draft.kcal, bpm:draft.bpm }; // check-in do dia sobrevive à troca
+    draft=freshDraft(k);
+    Object.assign(draft, keep);
+    persist(); renderHoje();
+  };
+  if(hasLoggedData(draft)){ appConfirm("Você já registrou séries nesta sessão. Trocar de treino vai apagar o registro de hoje.",go); return; }
+  go();
+}
+
+/* nova academia via folha (o prompt() do navegador não aparece no app instalado do iOS) */
+function openAddGym(){
+  const sheet=$("#sheet");
+  sheet.innerHTML=`<div class="grab"></div>
+    <h2>Nova academia</h2>
+    <div class="sub">Fica salva neste aparelho e aparece na lista.</div>
+    <input class="set-input" id="gymName" placeholder="Nome da academia" autocomplete="off" style="font-family:var(--body)">
+    <div class="exp-btns" style="margin-top:14px"><button class="eb primary" id="gymSave">Salvar</button></div>
+    <button class="sheet-close" id="gymCancel">Cancelar</button>`;
+  $("#scrim").classList.add("open");
+  const inp=sheet.querySelector("#gymName");
+  setTimeout(function(){ inp.focus(); },150);
+  sheet.querySelector("#gymSave").onclick=function(){
+    const name=inp.value.trim();
+    if(!name){ inp.style.borderColor="var(--vermelho)"; inp.placeholder="dê um nome pra academia"; inp.focus(); return; }
+    if(GYMS_BASE.indexOf(name)<0 && settings.gyms.indexOf(name)<0) settings.gyms.push(name);
+    draft.gym=name; settings.lastGym=name; save(LS_SET,settings); persist();
+    closeSheet(); renderHoje();
+  };
+  sheet.querySelector("#gymCancel").onclick=function(){ closeSheet(); renderHoje(); };
+}
+
+/* confirmação em folha (confirm() também não aparece no PWA standalone do iOS) */
+function appConfirm(msg,onYes,onNo){
+  const sheet=$("#sheet");
+  sheet.innerHTML=`<div class="grab"></div>
+    <h2>Confirmar</h2>
+    <div class="sub">${esc(msg)}</div>
+    <div class="exp-btns"><button class="eb primary" id="cfYes">Sim, continuar</button></div>
+    <button class="sheet-close" id="cfNo">Cancelar</button>`;
+  $("#scrim").classList.add("open");
+  sheet.querySelector("#cfYes").onclick=function(){ closeSheet(); onYes(); };
+  sheet.querySelector("#cfNo").onclick=function(){ closeSheet(); if(onNo) onNo(); };
 }
 
 function updateFinishBar(){
@@ -1520,7 +1598,7 @@ function finishWorkout(){
   const rec=JSON.parse(JSON.stringify(draft));
   rec.block=currentBlock().n; rec.week=currentWeek();
   // limpa reps pré-preenchidas (s.pre) de séries não realizadas — reps escolhidas pelo usuário ficam, mesmo sem peso (ex.: exercício corporal)
-  Object.values(rec.ex||{}).forEach(d=>{ if(Array.isArray(d.sets)) d.sets.forEach(s=>{ if(s.pre&&!s.done&&!s.peso&&!s.esf) s.reps=""; delete s.pre; }); });
+  Object.values(rec.ex||{}).forEach(d=>{ delete d.open; if(Array.isArray(d.sets)) d.sets.forEach(s=>{ if(s.pre&&!s.done&&!s.peso&&!s.esf) s.reps=""; delete s.pre; }); });
   // grava o nome real usado (alternativa/exercício próprio) — histórico e Cowork ficam independentes de edições futuras do plano
   Object.keys(rec.ex||{}).forEach(id=>{ const m=mergedEx(id); if(m){ const d=rec.ex[id]; const ai=(d.altIdx!=null)?d.altIdx:(d.alt?1:0); d.nm=(ai>0&&(m.alts||[])[ai-1])?(m.alts[ai-1]+" (alt.)"):m.n; } });
   rec.score=scoreWorkout(rec);
@@ -1575,10 +1653,12 @@ function openExport(rec){
       <button class="eb ghost" id="ebCopy"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M9 9V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-4M15 9H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V11a2 2 0 0 0-2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="copyLbl">Copiar texto</span></button>
     </div>
     <div class="help-note"><b>Primeira vez no iPhone?</b> Toque em "Exportar arquivo" → na folha de compartilhar escolha <b>Salvar em Arquivos</b> → pasta <b>Saúde › Treinos</b> (no Google Drive). Da próxima vez o caminho já aparece.</div>
+    <button class="sheet-close" id="expClose">Fechar</button>
   `;
   $("#scrim").classList.add("open");
   $("#ebShare").onclick=()=>shareFile(md,fn);
   $("#ebCopy").onclick=()=>{ navigator.clipboard.writeText(md).then(()=>{$("#copyLbl").textContent="Copiado!";setTimeout(()=>$("#copyLbl").textContent="Copiar texto",1500);}); };
+  $("#expClose").onclick=closeSheet;
 }
 
 async function shareFile(md,fn){
@@ -1595,7 +1675,7 @@ async function shareFile(md,fn){
   }
   // 3) em PWA standalone o <a download> falha no WebKit → orienta a copiar
   const standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);
-  if(standalone){ alert('Não consegui abrir o compartilhamento. Use o botão "Copiar texto" e cole o treino no Drive ou aqui no chat.'); return; }
+  if(standalone){ const hn=document.querySelector("#sheet .help-note"); if(hn) hn.innerHTML='<b style="color:var(--vermelho)">Não consegui abrir o compartilhamento.</b> Use o botão "Copiar texto" e cole o treino no Drive ou na conversa do Cowork.'; return; } // alert() não aparece no PWA do iOS
   // 4) navegador normal: download direto
   const blob=new Blob([md],{type:"text/markdown"});
   const url=URL.createObjectURL(blob);
@@ -1668,8 +1748,17 @@ function renderHist(){
         ${h.sonoH?`<span>sono <b>${h.sonoH}</b>h</span>`:""}
         ${h.cardioDone?`<span>Z2 <b>${h.cardioMin||"✓"}</b>${h.cardioMin?"min":""}</span>`:""}
       </div>
-      <button class="hist-re">📄 Ver resumo & arquivo →</button>`;
+      <div style="display:flex;gap:8px">
+        <button class="hist-re" style="flex:1">📄 Ver resumo & arquivo →</button>
+        <button class="hist-del" aria-label="remover treino">🗑</button>
+      </div>`;
     item.querySelector(".hist-re").onclick=()=>openExport(h);
+    item.querySelector(".hist-del").onclick=()=>{
+      appConfirm("Remover o treino "+sess.name+" de "+prettyDate(h.date)+" do histórico do app? (o arquivo .md exportado no Drive não é afetado)",function(){
+        const ix=history.indexOf(h); if(ix>=0){ history.splice(ix,1); save(LS_HIST,history); }
+        renderHist();
+      });
+    };
     v.appendChild(item);
   });
 }
@@ -1745,11 +1834,12 @@ function usedElsewhere(id,notK){
   return ORDER.some(k=>k!==notK && sessIds(k).indexOf(id)>=0);
 }
 function resetSessionPlan(k){
-  if(!confirm("Restaurar a sessão "+PROGRAM[k].name+" pro padrão do programa? Suas edições dela serão apagadas.")) return;
-  sessIds(k).forEach(id=>{ if(!EXBASE[id] && plan.custom[id] && !usedElsewhere(id,k) && !history.some(h=>h.ex&&h.ex[id]) && !(draft&&draft.ex&&draft.ex[id])) delete plan.custom[id]; });
-  PROGRAM[k].ex.forEach(e=>delete plan.ov[e.id]);
-  delete plan.order[k];
-  savePlan(); renderProg(); if(currentTab==="hoje") renderHoje();
+  appConfirm("Restaurar a sessão "+PROGRAM[k].name+" pro padrão do programa? Suas edições dela serão apagadas.",function(){
+    sessIds(k).forEach(id=>{ if(!EXBASE[id] && plan.custom[id] && !usedElsewhere(id,k) && !history.some(h=>h.ex&&h.ex[id]) && !(draft&&draft.ex&&draft.ex[id])) delete plan.custom[id]; });
+    PROGRAM[k].ex.forEach(e=>delete plan.ov[e.id]);
+    delete plan.order[k];
+    savePlan(); renderProg(); if(currentTab==="hoje") renderHoje();
+  });
 }
 function openExEditor(sessKey,id){
   const base=id?EXBASE[id]:null;
@@ -1781,7 +1871,7 @@ function openExEditor(sessKey,id){
   const done=()=>{ savePlan(); closeSheet(); renderProg(); if(currentTab==="hoje") renderHoje(); };
   sheet.querySelector("#pe-save").onclick=()=>{
     const val={ n:gv("pe-n"), sets:Math.max(1,Math.min(10,parseInt(gv("pe-sets"),10)||3)), rr:gv("pe-rr")||"10–12", rir:gv("pe-rir")||"2", rest:gv("pe-rest")||"75s", g:gv("pe-g")||"outro", c:gv("pe-c"), alts:gv("pe-alts").split("\n").map(x=>x.trim()).filter(Boolean) };
-    if(!val.n){ alert("Dá um nome pro exercício."); return; }
+    if(!val.n){ const ni=sheet.querySelector("#pe-n"); ni.style.borderColor="var(--vermelho)"; ni.placeholder="dê um nome pro exercício"; ni.focus(); return; } // alert() não aparece no PWA do iOS
     // se o nº de séries mudou e as linhas de hoje ainda estão intocadas, zera pra reconstruir com o alvo novo
     if(id && draft && draft.ex && draft.ex[id]){ const dd=draft.ex[id]; if(Array.isArray(dd.sets) && dd.sets.every(s=>!s.peso&&!s.esf&&!s.done&&(!s.reps||s.pre))){ dd.sets=[]; persist(); } } // reps pré-preenchidas (s.pre) não contam como toque
     if(!id){
@@ -1800,11 +1890,12 @@ function openExEditor(sessKey,id){
   };
   const rst=sheet.querySelector("#pe-restore"); if(rst) rst.onclick=()=>{ delete plan.ov[id]; done(); };
   const del=sheet.querySelector("#pe-del"); if(del) del.onclick=()=>{
-    if(!confirm("Remover \""+cur.n+"\" desta sessão? (o histórico dele fica guardado)")) return;
-    plan.order[sessKey]=sessIds(sessKey).filter(x=>x!==id);
-    // custom só é apagado de vez se NÃO houver histórico nem registro de hoje — senão perde nome/grupo nos gráficos
-    if(!EXBASE[id] && !usedElsewhere(id,null) && !history.some(h=>h.ex&&h.ex[id]) && !(draft&&draft.ex&&draft.ex[id])) delete plan.custom[id];
-    done();
+    appConfirm('Remover "'+cur.n+'" desta sessão? (o histórico dele fica guardado)',function(){
+      plan.order[sessKey]=sessIds(sessKey).filter(x=>x!==id);
+      // custom só é apagado de vez se NÃO houver histórico nem registro de hoje — senão perde nome/grupo nos gráficos
+      if(!EXBASE[id] && !usedElsewhere(id,null) && !history.some(h=>h.ex&&h.ex[id]) && !(draft&&draft.ex&&draft.ex[id])) delete plan.custom[id];
+      done();
+    },function(){ openExEditor(sessKey,id); });
   };
   sheet.querySelector("#pe-close").onclick=closeSheet;
 }
@@ -2158,10 +2249,10 @@ function openSettings(){
   sheet.querySelector("#setWeek").onchange=function(){ settings.week=parseInt(this.value,10); settings.startDate=null; sv(); sheet.querySelector("#setStart").value=""; updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#setStart").onchange=function(){ settings.startDate=this.value||null; sv(); updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#wipe").onclick=function(){
-    if(confirm("Apagar todos os treinos registrados, o rascunho de hoje, o histórico do Coach e as personalizações do plano? Não dá pra desfazer.")){
+    appConfirm("Apagar todos os treinos registrados, o rascunho de hoje, o histórico do Coach e as personalizações do plano? Não dá pra desfazer.",function(){
       history=[]; draft=null; coachMessages=[]; plan={ov:{},order:{},custom:{}}; save(LS_HIST,history); localStorage.removeItem(LS_DRAFT); localStorage.removeItem(LS_PLAN); refreshEXMETA(); saveCoach();
-      closeSheet(); updateWeekLabel(); setTab(currentTab);
-    }
+      updateWeekLabel(); setTab(currentTab);
+    },openSettings);
   };
   sheet.querySelector("#setClose").onclick=function(){ closeSheet(); if(currentTab==="coach") renderCoach(); };
 }
@@ -2186,6 +2277,16 @@ document.querySelectorAll(".tab").forEach(x=>x.onclick=()=>setTab(x.dataset.tab)
 $("#gearBtn").onclick=openSettings;
 $("#btnFinish").onclick=finishWorkout;
 $("#scrim").onclick=function(e){ if(e.target===this) closeSheet(); };
+// fechar qualquer folha: toque no risquinho (grab) ou arrastando o topo dela pra baixo (gesto iOS)
+$("#sheet").addEventListener("click",function(e){ if(e.target.classList && e.target.classList.contains("grab")) closeSheet(); });
+(function(){
+  const sheet=$("#sheet"); let y0=null;
+  sheet.addEventListener("touchstart",function(e){
+    y0=(sheet.scrollTop<=0 && e.target.closest && e.target.closest(".grab,h2,.sub"))?e.touches[0].clientY:null;
+  },{passive:true});
+  sheet.addEventListener("touchmove",function(e){ if(y0!=null && e.touches[0].clientY-y0>70){ y0=null; closeSheet(); } },{passive:true});
+  sheet.addEventListener("touchend",function(){ y0=null; },{passive:true});
+})();
 
 // week label no topo
 function updateWeekLabel(){ $("#weekLabel").innerHTML=`Sem ${currentWeek()}/12<br>${currentBlock().n.split(" — ")[0]==="1"?"Fundação":currentBlock().n.split(" — ")[1]}`; }
