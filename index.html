@@ -693,7 +693,7 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 
 <script>
 "use strict";
-const APP_VERSION="v17"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
+const APP_VERSION="v19"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
 
 /* ============================================================
    PROGRAMA — PPL 6x Spine-Safe (jun/2026) — embutido
@@ -1069,7 +1069,13 @@ function ensureDraft(){
     if(draft && draft.date!==todayStr()){
       const temCrono=draft.crono&&(draft.crono.run||draft.crono.el>0);
       const temComida=draft.meals&&Array.isArray(draft.meals.logged)&&draft.meals.logged.length>0;
-      if(hasLoggedData(draft)||temCrono||temComida){ try{ archiveDraft(); }catch(e){} }
+      if(hasLoggedData(draft)||temCrono){ try{ archiveDraft(); }catch(e){} }
+      else if(temComida){
+        // só comida (treino já finalizado antes): funde a nutrição no registro do dia em vez de substituí-lo por um rec sem exercícios
+        const ex=history.find(x=>x.date===draft.date&&x.session===draft.session);
+        if(ex){ ex.meals=JSON.parse(JSON.stringify(draft.meals)); save(LS_HIST,history); }
+        else { try{ archiveDraft(); }catch(e){} }
+      }
     }
     const wd=new Date().getDay();
     const sk=WD_MAP[wd]||"pushA";
@@ -1721,7 +1727,30 @@ function archiveDraft(){ // congela o draft atual e grava no histórico; retorna
   activeRest=null;
   return rec;
 }
-function finishWorkout(){ openExport(archiveDraft()); }
+/* aviso simples em folha (padrão do app; alert() não aparece no PWA iOS) */
+function appInfo(titulo,msg){
+  const sheet=$("#sheet");
+  sheet.innerHTML=`<div class="grab"></div><h2>${esc(titulo)}</h2><div class="sub">${esc(msg)}</div><button class="sheet-close" id="aiOk">Entendi</button>`;
+  $("#scrim").classList.add("open");
+  sheet.querySelector("#aiOk").onclick=closeSheet;
+}
+/* pós-finalizar: zera o treino na aba Hoje, preservando o que é do DIA (peso, academia, autorregulação, comida) */
+function resetAfterFinish(){
+  const keep={ date:draft.date, created:draft.created, autoreg:draft.autoreg, peso:draft.peso, gym:draft.gym, meals:draft.meals };
+  draft=freshDraft(draft.session);
+  Object.assign(draft, keep);
+  openStrip=null; activeRest=null; rcdSkip();
+  persist();
+  if(currentTab==="hoje") renderHoje();
+}
+function finishWorkout(){
+  const temAlgo=hasLoggedData(draft)||draft.z2only||(draft.crono&&(draft.crono.el>0||draft.crono.run));
+  if(!temAlgo){ appInfo("Nada pra finalizar","Marque pelo menos uma série (ou registre o dia vermelho/Zona 2) antes de finalizar."); return; }
+  const go=function(){ const rec=archiveDraft(); resetAfterFinish(); openExport(rec); };
+  const jaTem=history.some(h=>h.date===draft.date&&h.session===draft.session);
+  if(jaTem){ appConfirm("Você já finalizou "+(PROGRAM[draft.session]?PROGRAM[draft.session].name:draft.session)+" hoje — está no Histórico. Finalizar de novo SUBSTITUI aquele registro pelo de agora. (Pra corrigir um treino já finalizado, prefira o ✎ no Histórico.)",go); return; }
+  go();
+}
 
 /* comparativo com o treino anterior da mesma sessão (folha de finalizar) */
 function buildCompareHTML(rec){
@@ -1774,8 +1803,9 @@ function openExport(rec){
   $("#expClose").onclick=closeSheet;
 }
 
-async function shareFile(md,fn){
-  const file=new File([md],fn,{type:"text/markdown"});
+async function shareFile(md,fn,mime){
+  mime=mime||"text/markdown";
+  const file=new File([md],fn,{type:mime});
   // 1) compartilhar o arquivo (caminho ideal no iOS 16.4+ → "Salvar em Arquivos")
   if(navigator.canShare && navigator.canShare({files:[file]})){
     try{ await navigator.share({files:[file],title:fn}); return; }
@@ -1790,7 +1820,7 @@ async function shareFile(md,fn){
   const standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);
   if(standalone){ const hn=document.querySelector("#sheet .help-note"); if(hn) hn.innerHTML='<b style="color:var(--vermelho)">Não consegui abrir o compartilhamento.</b> Use o botão "Copiar texto" e cole o treino no Drive ou na conversa do Cowork.'; return; } // alert() não aparece no PWA do iOS
   // 4) navegador normal: download direto
-  const blob=new Blob([md],{type:"text/markdown"});
+  const blob=new Blob([md],{type:mime});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a"); a.href=url; a.download=fn; document.body.appendChild(a); a.click();
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
@@ -2566,7 +2596,8 @@ function openSettings(){
     </div>
     <div class="set-block">
       <div class="sl">Dados neste aparelho</div>
-      <div class="sd">${history.length} treino(s) salvos. O iOS pode apagar após ~7 dias sem abrir o app — o backup confiável é o .md exportado pro Drive a cada treino.</div>
+      <div class="sd">${history.length} treino(s) salvos. O iOS pode apagar após ~7 dias sem abrir o app — exporte o backup completo de vez em quando (Salvar em Arquivos → Saúde) e o .md de cada treino pro Drive.</div>
+      <button class="eb ghost" id="bkpAll" style="margin:0 0 10px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Exportar backup completo (JSON)</button>
       <button class="btn-danger" id="wipe">Apagar tudo</button>
     </div>
     <div class="set-block" style="border-bottom:none">
@@ -2585,6 +2616,14 @@ function openSettings(){
   sheet.querySelector("#setProt").addEventListener("input",function(){ const v=parseInt(this.value,10); settings.protGoal=(!isNaN(v)&&v>0)?Math.min(400,v):170; sv(); });
   sheet.querySelector("#setWeek").onchange=function(){ settings.week=parseInt(this.value,10); settings.startDate=null; sv(); sheet.querySelector("#setStart").value=""; updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#setStart").onchange=function(){ settings.startDate=this.value||null; sv(); updateWeekLabel(); renderHoje(); };
+  sheet.querySelector("#bkpAll").onclick=function(){
+    // backup completo: os 6 keys treino_*_v1 crus (pré-requisito da migração pro app nativo)
+    const keys=[LS_DRAFT,LS_HIST,LS_SET,LS_COACH,LS_FOOD,LS_PLAN];
+    const data={};
+    keys.forEach(k=>{ data[k]=load(k,null); });
+    const payload={app:"treino",backup_version:1,app_version:APP_VERSION,exported_at:new Date().toISOString(),data:data};
+    shareFile(JSON.stringify(payload,null,1),"treino-backup-"+todayStr()+".json","application/json");
+  };
   sheet.querySelector("#wipe").onclick=function(){
     appConfirm("Apagar todos os treinos registrados, o rascunho de hoje, o histórico do Coach e as personalizações do plano? Não dá pra desfazer.",function(){
       history=[]; draft=null; coachMessages=[]; plan={ov:{},order:{},custom:{}}; save(LS_HIST,history); localStorage.removeItem(LS_DRAFT); localStorage.removeItem(LS_PLAN); refreshEXMETA(); saveCoach();
