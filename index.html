@@ -693,7 +693,7 @@ body.coachlock .coach-input{position:static;padding-top:6px;}
 
 <script>
 "use strict";
-const APP_VERSION="v19"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
+const APP_VERSION="v21"; // substituída pela versão real (vN) no build público — mostrar em ⚙ Ajustes p/ diagnosticar cache
 
 /* ============================================================
    PROGRAMA — PPL 6x Spine-Safe (jun/2026) — embutido
@@ -910,7 +910,55 @@ function allGyms(){ return GYMS_BASE.concat((settings.gyms||[]).filter(g=>GYMS_B
    ============================================================ */
 const LS_DRAFT="treino_draft_v1", LS_HIST="treino_hist_v1", LS_SET="treino_set_v1", LS_COACH="treino_coach_v1", LS_FOOD="treino_food_v1";
 function load(k,def){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):def;}catch(e){return def;} }
-function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
+function save(k,v){ try{const s=JSON.stringify(v); localStorage.setItem(k,s); natSet(k,s);}catch(e){} }
+
+/* ---------- ponte nativa (Capacitor) — no PWA/navegador IS_NATIVE é false e tudo vira no-op ---------- */
+const CAP=window.Capacitor, IS_NATIVE=!!(CAP&&CAP.isNativePlatform&&CAP.isNativePlatform());
+const NP=IS_NATIVE?(CAP.Plugins||{}):{};
+const NATIVE_KEYS=["treino_draft_v1","treino_hist_v1","treino_set_v1","treino_coach_v1","treino_food_v1","treino_plan_v1"]; // literais: LS_PLAN só é declarado mais abaixo
+// Snapshot síncrono ANTES de qualquer código do boot escrever (ex.: ensureDraft cria draft vazio no
+// cenário de purge — sem o snapshot, esse draft vazio mascararia a purga e sobrescreveria o cofre).
+const NAT_HAD={}; if(IS_NATIVE){ NATIVE_KEYS.forEach(function(k){ NAT_HAD[k]=localStorage.getItem(k)!=null; }); }
+let natReady=!IS_NATIVE; const natQ=[]; // escritas do boot ficam na fila até o rehydrate decidir o que vale
+function natSet(k,s){ if(!IS_NATIVE||!NP.Preferences) return; if(!natReady){ natQ.push([k,s]); return; } try{ NP.Preferences.set({key:k,value:s}); }catch(e){} }
+function natRemove(k){ if(!IS_NATIVE||!NP.Preferences) return; try{ NP.Preferences.remove({key:k}); }catch(e){} }
+async function natRehydrate(){
+  // localStorage é volátil no WKWebView (iOS pode purgar); Preferences é o cofre durável.
+  // Key ausente no boot (NAT_HAD) mas presente no cofre → restaura e recarrega 1x (flag de sessão evita loop).
+  // Key presente no boot mas ausente no cofre (1º boot com espelho) → semeia o cofre.
+  if(!IS_NATIVE||!NP.Preferences) return;
+  if(sessionStorage.getItem("nat_rehydrated")){ natReady=true; natQ.splice(0).forEach(function(q){ natSet(q[0],q[1]); }); return; }
+  sessionStorage.setItem("nat_rehydrated","1");
+  let restored=0;
+  for(const k of NATIVE_KEYS){
+    try{
+      const r=await NP.Preferences.get({key:k});
+      if(r&&r.value!=null&&!NAT_HAD[k]){ localStorage.setItem(k,r.value); restored++; }
+      else if(NAT_HAD[k]&&(!r||r.value==null)){ const cur=localStorage.getItem(k); if(cur!=null){ try{ NP.Preferences.set({key:k,value:cur}); }catch(e){} } }
+    }catch(e){}
+  }
+  natReady=true;
+  const q=natQ.splice(0);
+  if(restored>0){ location.reload(); return; } // descarta a fila: são escritas do boot "vazio" pré-restauração
+  q.forEach(function(pair){ natSet(pair[0],pair[1]); });
+}
+natRehydrate();
+let natRestGen=0; // geração: pular/reagendar o descanso invalida um agendamento ainda em voo (os awaits abaixo demoram)
+async function natRestNotifSchedule(endTs){
+  // com a tela apagada o WebView congela e o alerta sonoro não toca — a notificação local cobre esse caso
+  if(!IS_NATIVE||!NP.LocalNotifications) return;
+  const gen=++natRestGen;
+  try{
+    let p=await NP.LocalNotifications.checkPermissions();
+    if(p.display!=="granted"){ p=await NP.LocalNotifications.requestPermissions(); if(p.display!=="granted") return; }
+    if(gen!==natRestGen) return;
+    await NP.LocalNotifications.cancel({notifications:[{id:777}]});
+    if(gen!==natRestGen) return;
+    await NP.LocalNotifications.schedule({notifications:[{id:777,title:"Descanso acabou",body:"Bora — próxima série.",schedule:{at:new Date(endTs)}}]});
+    if(gen!==natRestGen){ NP.LocalNotifications.cancel({notifications:[{id:777}]}); } // cancelaram enquanto o schedule rodava
+  }catch(e){}
+}
+function natRestNotifCancel(){ if(!IS_NATIVE||!NP.LocalNotifications) return; natRestGen++; try{ NP.LocalNotifications.cancel({notifications:[{id:777}]}); }catch(e){} }
 
 let settings = load(LS_SET, {startDate:null, week:1});
 if(!settings.model) settings.model="claude-opus-4-8";
@@ -919,6 +967,7 @@ if(!Array.isArray(settings.gyms)) settings.gyms=[];
 if(settings.lastGym===undefined) settings.lastGym="";
 if(settings.profile===undefined) settings.profile="";
 if(settings.protGoal===undefined) settings.protGoal=170; // meta diária de proteína (g) — métrica-herói da nutrição
+if(settings.offline===undefined) settings.offline=false; // ON = nenhuma chamada de internet sai do app
 
 /* ---------- plano editável (fica só no aparelho; sobrepõe o PROGRAM) ---------- */
 const LS_PLAN="treino_plan_v1";
@@ -996,14 +1045,16 @@ function restSeconds(r){ const m=String(r||"").match(/(\d+)/); return m?parseInt
 let restCD=null; // contagem regressiva do descanso
 function startRestCountdown(sec){
   sec=sec||90; restCD={endTs:Date.now()+sec*1000};
+  natRestNotifSchedule(restCD.endTs);
   try{ const ac=window.__ac||(window.__ac=new (window.AudioContext||window.webkitAudioContext)()); if(ac.state!=="running") ac.resume(); }catch(e){} // desbloqueia áudio no toque (iOS pode marcar "interrupted", não só "suspended")
   const bar=$("#restcd"); if(bar) bar.classList.remove("hidden","flash");
   rcdTick();
 }
-function rcdAdjust(s){ if(restCD){ restCD.endTs+=s*1000; if(restCD.endTs<Date.now()) restCD.endTs=Date.now(); rcdTick(); } }
-function rcdSkip(){ restCD=null; const bar=$("#restcd"); if(bar){ bar.classList.add("hidden"); bar.classList.remove("flash"); } }
+function rcdAdjust(s){ if(restCD){ restCD.endTs+=s*1000; if(restCD.endTs<Date.now()) restCD.endTs=Date.now(); natRestNotifSchedule(restCD.endTs); rcdTick(); } }
+function rcdSkip(){ restCD=null; natRestNotifCancel(); const bar=$("#restcd"); if(bar){ bar.classList.add("hidden"); bar.classList.remove("flash"); } }
 function restAlert(){
-  try{ if(navigator.vibrate) navigator.vibrate([220,90,220,90,420]); }catch(e){} // Android/nativo; iOS PWA não vibra (vem no app nativo)
+  if(IS_NATIVE&&NP.Haptics){ try{ NP.Haptics.vibrate({duration:400}); setTimeout(function(){ try{ NP.Haptics.vibrate({duration:500}); }catch(e){} },550); }catch(e){} }
+  try{ if(navigator.vibrate) navigator.vibrate([220,90,220,90,420]); }catch(e){} // Android/PWA; no iOS nativo o haptic acima cobre
   try{ const ac=window.__ac; if(ac){ if(ac.state!=="running") ac.resume();
     const beep=(t0,f,dur)=>{ const o=ac.createOscillator(),g=ac.createGain(); o.type="sine"; o.connect(g); g.connect(ac.destination); o.frequency.value=f; g.gain.setValueAtTime(0.001,t0); g.gain.exponentialRampToValueAtTime(0.3,t0+0.02); g.gain.exponentialRampToValueAtTime(0.001,t0+dur); o.start(t0); o.stop(t0+dur+0.03); };
     const now=ac.currentTime; beep(now,880,0.18); beep(now+0.26,880,0.18); beep(now+0.52,1320,0.42);
@@ -1016,7 +1067,7 @@ function rcdTick(){
   const rem=Math.round((restCD.endTs-Date.now())/1000);
   const t=bar.querySelector("#rcdTime");
   if(rem>0){ if(t) t.textContent=Math.floor(rem/60)+":"+String(rem%60).padStart(2,"0"); }
-  else { if(t) t.textContent="vai!"; restCD=null; restAlert(); setTimeout(function(){ if(!restCD){ bar.classList.add("hidden"); bar.classList.remove("flash"); } },1900); }
+  else { if(t) t.textContent="vai!"; restCD=null; natRestNotifCancel(); restAlert(); setTimeout(function(){ if(!restCD){ bar.classList.add("hidden"); bar.classList.remove("flash"); } },1900); } // cancel: em 1º plano o alerta in-app basta; a notificação só fica pra quando o app está congelado
 }
 function tickRest(){}
 
@@ -1535,6 +1586,7 @@ function openAddGym(){
 }
 
 /* confirmação em folha (confirm() também não aparece no PWA standalone do iOS) */
+let sheetOnDismiss=null; // appConfirm pendente: fechar por scrim/gesto = Cancelar (senão Promises de consentimento ficam penduradas pra sempre)
 function appConfirm(msg,onYes,onNo){
   const sheet=$("#sheet");
   sheet.innerHTML=`<div class="grab"></div>
@@ -1543,8 +1595,9 @@ function appConfirm(msg,onYes,onNo){
     <div class="exp-btns"><button class="eb primary" id="cfYes">Sim, continuar</button></div>
     <button class="sheet-close" id="cfNo">Cancelar</button>`;
   $("#scrim").classList.add("open");
-  sheet.querySelector("#cfYes").onclick=function(){ closeSheet(); onYes(); };
-  sheet.querySelector("#cfNo").onclick=function(){ closeSheet(); if(onNo) onNo(); };
+  sheetOnDismiss=onNo||null;
+  sheet.querySelector("#cfYes").onclick=function(){ sheetOnDismiss=null; closeSheet(); onYes(); };
+  sheet.querySelector("#cfNo").onclick=function(){ sheetOnDismiss=null; closeSheet(); if(onNo) onNo(); };
 }
 
 function updateFinishBar(){
@@ -1818,7 +1871,7 @@ async function shareFile(md,fn,mime){
   }
   // 3) em PWA standalone o <a download> falha no WebKit → orienta a copiar
   const standalone=(navigator.standalone===true)||(window.matchMedia&&matchMedia("(display-mode: standalone)").matches);
-  if(standalone){ const hn=document.querySelector("#sheet .help-note"); if(hn) hn.innerHTML='<b style="color:var(--vermelho)">Não consegui abrir o compartilhamento.</b> Use o botão "Copiar texto" e cole o treino no Drive ou na conversa do Cowork.'; return; } // alert() não aparece no PWA do iOS
+  if(standalone){ const hn=document.querySelector("#sheet .help-note"); if(hn) hn.innerHTML='<b style="color:var(--vermelho)">Não consegui abrir o compartilhamento.</b> Use o botão "Copiar texto" e cole o treino no Drive ou na conversa do Cowork.'; else appConfirm("Não consegui abrir a folha de compartilhar. Tente de novo.",function(){},openSettings); return; } // alert() não aparece no PWA do iOS; fora do sheet de export (ex.: backup em Ajustes) avisa via appConfirm
   // 4) navegador normal: download direto
   const blob=new Blob([md],{type:mime});
   const url=URL.createObjectURL(blob);
@@ -1826,7 +1879,7 @@ async function shareFile(md,fn,mime){
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
 }
 
-function closeSheet(){ $("#scrim").classList.remove("open"); if(currentTab==="coach") renderCoach(); } // fechar Ajustes por gesto também precisa reativar o input do Coach
+function closeSheet(){ const d=sheetOnDismiss; sheetOnDismiss=null; $("#scrim").classList.remove("open"); if(currentTab==="coach") renderCoach(); if(d) d(); } // fechar Ajustes por gesto também precisa reativar o input do Coach; dispensar um appConfirm pendente conta como Cancelar
 
 /* ============================================================
    HISTÓRICO
@@ -2249,12 +2302,35 @@ function buildCoworkPrompt(){
   p+=`\nSemana ${currentWeek()}/12 · bloco ${currentBlock().n}.`;
   return p;
 }
+/* ---------- portão de nuvem: modo offline + consentimento (1x por sessão de uso) ---------- */
+function cloudGate(cb){
+  if(settings.offline){
+    appConfirm("Modo offline ativado — nada sai do aparelho. Quer abrir os Ajustes pra desligar?",openSettings);
+    return;
+  }
+  if(sessionStorage.getItem("treino_cloud_ok")){ cb(); return; }
+  appConfirm("Isto envia dados à API da Anthropic usando a sua chave (mensagens do Coach + perfil de saúde, treinos recentes e nutrição do dia). Vale até você fechar o app. Enviar?",function(){
+    sessionStorage.setItem("treino_cloud_ok","1"); cb();
+  });
+}
+function cloudGateP(){ return new Promise(function(resolve){ // versão p/ fluxos async (cálculo de macros)
+  if(settings.offline){ resolve(false); return; }
+  if(sessionStorage.getItem("treino_cloud_ok")){ resolve(true); return; }
+  appConfirm("Isto envia a descrição dos alimentos à API da Anthropic usando a sua chave. Vale até você fechar o app. Enviar?",function(){
+    sessionStorage.setItem("treino_cloud_ok","1"); resolve(true);
+  },function(){ resolve(false); });
+}); }
+
+let coachTaText=""; // rascunho do input do Coach (só em memória)
 function coachSend(text){
   if(coachBusy) return;
   if(!(settings.apiKey||"").trim()){ openSettings(); return; }
-  coachMessages.push({role:"user",content:text}); saveCoach();
-  coachBusy=true; renderCoach();
-  askClaude();
+  cloudGate(function(){
+    coachTaText="";
+    coachMessages.push({role:"user",content:text}); saveCoach();
+    coachBusy=true; renderCoach();
+    askClaude();
+  });
 }
 async function askClaude(){
   const key=(settings.apiKey||"").trim();
@@ -2346,7 +2422,9 @@ function renderCoach(){
     <button class="coach-send" id="coachSendBtn" ${(!hasKey||coachBusy)?"disabled":""} aria-label="Enviar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 12h15M13 6l6 6-6 6" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
   v.appendChild(inp);
   const ta=inp.querySelector("#coachText");
-  ta.addEventListener("input",()=>{ ta.style.height="auto"; ta.style.height=Math.min(120,ta.scrollHeight)+"px"; });
+  ta.value=coachTaText; // sobrevive a re-renders (fechar Ajustes/consentimento por cima do Coach não pode apagar o que está digitado)
+  if(coachTaText){ ta.style.height="auto"; ta.style.height=Math.min(120,ta.scrollHeight)+"px"; }
+  ta.addEventListener("input",()=>{ coachTaText=ta.value; ta.style.height="auto"; ta.style.height=Math.min(120,ta.scrollHeight)+"px"; });
   const send=()=>{ const t=ta.value.trim(); if(t) coachSend(t); };
   inp.querySelector("#coachSendBtn").onclick=send;
   if(currentTab==="coach" && (coachMessages.length||coachBusy)){ feed.scrollTop=feed.scrollHeight; requestAnimationFrame(()=>{ feed.scrollTop=feed.scrollHeight; }); }
@@ -2377,6 +2455,8 @@ function normItem(o){ // sanitiza um item vindo da IA/API
 async function parseFoodText(text){
   const key=(settings.apiKey||"").trim();
   if(!key) throw {noKey:true};
+  if(settings.offline) throw {msg:"Modo offline ativado — desligue em ⚙ Ajustes pra calcular macros."};
+  if(!(await cloudGateP())) throw {msg:"Envio cancelado."};
   const sys=`Você é um calculador de macros nutricionais brasileiro. Recebe uma descrição de comida em português (com quantidades caseiras: "colher", "concha", "fatia", "prato", "unidade", gramas, ml) e devolve os macros ESTIMADOS de cada alimento separadamente, usando valores da culinária brasileira (TACO/TBCA). Responda SOMENTE com um array JSON válido, sem texto antes ou depois, no formato:
 [{"nome":"Patinho grelhado","q":"180 g","kcal":320,"prot":56,"carb":0,"gord":10,"fib":0}]
 Regras: "kcal" inteiro; "prot"/"carb"/"gord"/"fib" em gramas (número, pode ter 1 casa decimal); "q" = a quantidade que você assumiu. Um objeto por alimento distinto. Se a quantidade não for dada, assuma uma porção caseira típica e diga qual em "q". Nunca invente alimentos que não estão na descrição.`;
@@ -2396,6 +2476,7 @@ Regras: "kcal" inteiro; "prot"/"carb"/"gord"/"fib" em gramas (número, pode ter 
 }
 /* código de barras via Open Food Facts (aberto, sem conta; macros por 100 g) */
 async function lookupBarcode(code){
+  if(settings.offline) throw {msg:"Modo offline ativado — desligue em ⚙ Ajustes pra buscar o código."};
   code=String(code||"").replace(/\D/g,""); if(code.length<6) throw {msg:"Código de barras inválido."};
   let data;
   try{ const res=await fetch("https://world.openfoodfacts.org/api/v2/product/"+code+".json?fields=product_name,brands,nutriments");
@@ -2585,6 +2666,17 @@ function openSettings(){
       <select class="set-input" id="setModel" style="font-family:var(--body)">${models.map(m=>`<option value="${m[0]}" ${settings.model===m[0]?"selected":""}>${m[1]}</option>`).join("")}</select>
     </div>
     <div class="set-block">
+      <div class="sl">Modo offline</div>
+      <div class="sd">Ligado: <b>nenhum dado seu</b> sai do aparelho — Coach, cálculo de macros e código de barras ficam desativados; todo o resto funciona normal.</div>
+      <select class="set-input" id="setOffline" style="font-family:var(--body)"><option value="0">Desligado — nuvem sob confirmação</option><option value="1" ${settings.offline?"selected":""}>Ligado — 100% no aparelho</option></select>
+    </div>
+    ${IS_NATIVE?`<div class="set-block">
+      <div class="sl">Apple Saúde <span style="color:var(--accent-2)">— teste (spike)</span></div>
+      <div class="sd">Pede permissão e lê seu último peso da Apple Saúde. É o teste decisivo do provisionamento grátis.</div>
+      <button class="eb ghost" id="hkTest" style="margin:0 0 8px">Testar Apple Saúde</button>
+      <div id="hkOut" style="font-size:13px;color:var(--dim);line-height:1.5"></div>
+    </div>`:""}
+    <div class="set-block">
       <div class="sl">Semana do programa</div>
       <div class="sd">1 a 12 — define o bloco e o RIR alvo.</div>
       <select class="set-input" id="setWeek" style="font-family:var(--body)">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${currentWeek()===i+1?"selected":""}>Semana ${i+1}</option>`).join("")}</select>
@@ -2598,6 +2690,8 @@ function openSettings(){
       <div class="sl">Dados neste aparelho</div>
       <div class="sd">${history.length} treino(s) salvos. O iOS pode apagar após ~7 dias sem abrir o app — exporte o backup completo de vez em quando (Salvar em Arquivos → Saúde) e o .md de cada treino pro Drive.</div>
       <button class="eb ghost" id="bkpAll" style="margin:0 0 10px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Exportar backup completo (JSON)</button>
+      <button class="eb ghost" id="bkpImp" style="margin:0 0 10px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 4v12m0 0 4-4m-4 4-4-4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Importar backup (JSON)</button>
+      <input type="file" id="bkpFile" accept="application/json,.json" style="display:none">
       <button class="btn-danger" id="wipe">Apagar tudo</button>
     </div>
     <div class="set-block" style="border-bottom:none">
@@ -2613,6 +2707,22 @@ function openSettings(){
   sheet.querySelector("#setKey").addEventListener("input",function(){ settings.apiKey=this.value.trim(); sv(); });
   sheet.querySelector("#setProfile").addEventListener("input",function(){ settings.profile=this.value; sv(); });
   sheet.querySelector("#setModel").onchange=function(){ settings.model=this.value; sv(); };
+  sheet.querySelector("#setOffline").onchange=function(){ settings.offline=this.value==="1"; sv(); sessionStorage.removeItem("treino_cloud_ok"); }; // religar a nuvem volta a pedir confirmação
+  if(IS_NATIVE&&sheet.querySelector("#hkTest")) sheet.querySelector("#hkTest").onclick=async function(){
+    const out=sheet.querySelector("#hkOut"); const H=NP.Health;
+    if(!H){ out.textContent="Plugin de saúde não está neste build — rode cap sync e recompile."; return; }
+    try{
+      out.textContent="Pedindo permissão…";
+      await H.requestAuthorization({read:["weight","sleep"],write:[]});
+      out.textContent="Permissão ok. Lendo peso…";
+      const r=await H.readSamples({dataType:"weight",startDate:new Date(Date.now()-365*864e5).toISOString(),endDate:new Date().toISOString(),limit:10});
+      const ss=(r&&r.samples)||[];
+      if(!ss.length){ out.textContent="✅ Autorizou — mas não achei amostra de peso no último ano. Registra um peso no app Saúde e testa de novo."; return; }
+      const best=ss.reduce(function(a,b){ return String(a.startDate||a.date||"")>String(b.startDate||b.date||"")?a:b; });
+      const kg=(best.value!=null?best.value:JSON.stringify(best)), dt=String(best.startDate||best.date||"").slice(0,10);
+      out.textContent="✅ GATE PASSOU — último peso: "+kg+" kg ("+dt+"). HealthKit funciona no provisionamento grátis.";
+    }catch(e){ out.textContent="❌ "+((e&&(e.message||e.errorMessage))||JSON.stringify(e)); }
+  };
   sheet.querySelector("#setProt").addEventListener("input",function(){ const v=parseInt(this.value,10); settings.protGoal=(!isNaN(v)&&v>0)?Math.min(400,v):170; sv(); });
   sheet.querySelector("#setWeek").onchange=function(){ settings.week=parseInt(this.value,10); settings.startDate=null; sv(); sheet.querySelector("#setStart").value=""; updateWeekLabel(); renderHoje(); };
   sheet.querySelector("#setStart").onchange=function(){ settings.startDate=this.value||null; sv(); updateWeekLabel(); renderHoje(); };
@@ -2621,12 +2731,33 @@ function openSettings(){
     const keys=[LS_DRAFT,LS_HIST,LS_SET,LS_COACH,LS_FOOD,LS_PLAN];
     const data={};
     keys.forEach(k=>{ data[k]=load(k,null); });
+    if(data[LS_SET]&&typeof data[LS_SET]==="object"){ data[LS_SET]=Object.assign({},data[LS_SET]); delete data[LS_SET].apiKey; } // credencial NUNCA sai no backup (o arquivo vai pro Drive); re-digita ao restaurar
     const payload={app:"treino",backup_version:1,app_version:APP_VERSION,exported_at:new Date().toISOString(),data:data};
     shareFile(JSON.stringify(payload,null,1),"treino-backup-"+todayStr()+".json","application/json");
   };
+  sheet.querySelector("#bkpImp").onclick=function(){ sheet.querySelector("#bkpFile").click(); };
+  sheet.querySelector("#bkpFile").onchange=function(){
+    const f=this.files&&this.files[0]; this.value=""; if(!f) return;
+    const rd=new FileReader();
+    rd.onerror=function(){ appConfirm("Não consegui ler o arquivo. Tente escolher o backup de novo.",openSettings,openSettings); };
+    rd.onload=function(){
+      let p=null; try{ p=JSON.parse(rd.result); }catch(e){}
+      if(!p||p.app!=="treino"||!p.data||typeof p.data!=="object"){ appConfirm("Esse arquivo não parece um backup do Treino (exportado em Ajustes). Nada foi alterado.",openSettings,openSettings); return; }
+      const quando=(p.exported_at||"").slice(0,10)||"data desconhecida";
+      appConfirm("Substituir os dados deste aparelho pelos do backup de "+quando+"? Treinos, plano, ajustes e histórico do Coach serão trocados. Não dá pra desfazer.",function(){
+        NATIVE_KEYS.forEach(function(k){ if(p.data[k]!=null){ let v=p.data[k];
+          if(k===LS_SET&&v&&typeof v==="object"){ v=Object.assign({},v); delete v.apiKey; const cur=load(LS_SET,null); if(cur&&cur.apiKey) v.apiKey=cur.apiKey; } // chave nunca entra por arquivo; a do aparelho é preservada
+          const s=JSON.stringify(v); try{ localStorage.setItem(k,s); }catch(e){} natSet(k,s); }
+          else if(k!==LS_SET){ try{ localStorage.removeItem(k); }catch(e){} natRemove(k); } // "substituir" de verdade: key ausente no backup some do aparelho (menos Ajustes, pra não perder a chave)
+        });
+        location.reload(); // re-inicializa todo o estado a partir do que foi importado
+      },openSettings);
+    };
+    rd.readAsText(f);
+  };
   sheet.querySelector("#wipe").onclick=function(){
     appConfirm("Apagar todos os treinos registrados, o rascunho de hoje, o histórico do Coach e as personalizações do plano? Não dá pra desfazer.",function(){
-      history=[]; draft=null; coachMessages=[]; plan={ov:{},order:{},custom:{}}; save(LS_HIST,history); localStorage.removeItem(LS_DRAFT); localStorage.removeItem(LS_PLAN); refreshEXMETA(); saveCoach();
+      history=[]; draft=null; coachMessages=[]; plan={ov:{},order:{},custom:{}}; save(LS_HIST,history); localStorage.removeItem(LS_DRAFT); natRemove(LS_DRAFT); localStorage.removeItem(LS_PLAN); natRemove(LS_PLAN); refreshEXMETA(); saveCoach();
       updateWeekLabel(); setTab(currentTab);
     },openSettings);
   };
